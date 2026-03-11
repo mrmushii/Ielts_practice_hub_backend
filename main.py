@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from routers.core import router as core_router
 from routers.speaking import router as speaking_router
 from routers.writing import router as writing_router
+from routers.reading import router as reading_router
 from utils.db import connect_to_mongo, close_mongo_connection
 
 load_dotenv()
@@ -37,6 +38,7 @@ app.add_middleware(
 app.include_router(core_router)
 app.include_router(speaking_router)
 app.include_router(writing_router)
+app.include_router(reading_router)
 
 
 @app.get("/health")
