@@ -3,21 +3,19 @@ Speaking test API routes.
 Handles session management, audio transcription, examiner responses, and TTS.
 """
 
-from fastapi import APIRouter, UploadFile, File, Form
+from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from agents.speaking_agent import examiner_respond, generate_feedback
 from utils.stt import transcribe_audio
 from utils.tts import synthesize_speech, VOICES
+from utils.db import get_db
+from models.session import SpeakingSession, ChatMessage
 import tempfile
 import os
 import uuid
 
 router = APIRouter(prefix="/api/speaking", tags=["speaking"])
-
-# ---- In-memory session store (replaced with MongoDB in Step 4) ----
-sessions: dict[str, dict] = {}
-
 
 # ---- Schemas ----
 
@@ -47,29 +45,29 @@ class FeedbackResponse(BaseModel):
 # ---- Start a new speaking test ----
 
 @router.post("/start", response_model=StartSessionResponse)
-async def start_session(voice: str = "british_female"):
+async def start_session(voice: str = "british_female", db=Depends(get_db)):
     """Starts a new IELTS speaking test session. Examiner introduces and asks the first question."""
     session_id = uuid.uuid4().hex
-
-    # Initialize session
-    sessions[session_id] = {
-        "part": 1,
-        "history": [],
-        "voice": voice,
-    }
 
     # Get examiner's opening (Part 1 intro + first question)
     examiner_text = await examiner_respond(part=1, history=[])
 
     # Save to history
-    sessions[session_id]["history"].append({
-        "role": "examiner",
-        "content": examiner_text,
-    })
+    history = [ChatMessage(role="examiner", content=examiner_text)]
 
     # Generate TTS audio
     tts_voice = VOICES.get(voice, VOICES["british_female"])
     audio_path = await synthesize_speech(text=examiner_text, voice=tts_voice)
+
+    # Initialize and save session to DB
+    session = SpeakingSession(
+        session_id=session_id,
+        part=1,
+        voice=voice,
+        history=history
+    )
+    
+    await db.speaking_sessions.insert_one(session.model_dump())
 
     return StartSessionResponse(
         session_id=session_id,
@@ -82,34 +80,18 @@ async def start_session(voice: str = "british_female"):
 # ---- Candidate responds (text) ----
 
 @router.post("/respond", response_model=RespondResponse)
-async def respond_text(req: RespondRequest):
+async def respond_text(req: RespondRequest, db=Depends(get_db)):
     """Candidate sends a text response; examiner replies."""
-    session = sessions.get(req.session_id)
-    if not session:
-        raise ValueError("Session not found. Please start a new test.")
-
-    # Add candidate's response to history
-    session["history"].append({
-        "role": "candidate",
-        "content": req.candidate_text,
-    })
-
-    # Detect part transitions from examiner's previous messages
-    current_part = session["part"]
-    last_examiner = ""
-    for msg in reversed(session["history"]):
-        if msg["role"] == "examiner":
-            last_examiner = msg["content"].lower()
-            break
-
-    if "move on to part 2" in last_examiner and current_part == 1:
-        session["part"] = 2
-    elif "move on to part 3" in last_examiner and current_part == 2:
-        session["part"] = 3
-
-    is_complete = "end of the speaking test" in last_examiner and current_part == 3
-
-    if is_complete:
+    
+    # Retrieve session from DB
+    session_doc = await db.speaking_sessions.find_one({"session_id": req.session_id})
+    if not session_doc:
+        raise HTTPException(status_code=404, detail="Session not found. Please start a new test.")
+        
+    session = SpeakingSession(**session_doc)
+    
+    # Check if already complete
+    if session.is_complete:
         return RespondResponse(
             examiner_text="The speaking test is now complete. You can request your feedback.",
             audio_url="",
@@ -117,28 +99,60 @@ async def respond_text(req: RespondRequest):
             is_complete=True,
         )
 
+    # Add candidate's response to history
+    session.history.append(ChatMessage(role="candidate", content=req.candidate_text))
+
+    # Detect part transitions from examiner's previous messages
+    last_examiner = ""
+    for msg in reversed(session.history[:-1]): # excluding the candidate payload we just pushed
+        if msg.role == "examiner":
+            last_examiner = msg.content.lower()
+            break
+
+    if "move on to part 2" in last_examiner and session.part == 1:
+        session.part = 2
+    elif "move on to part 3" in last_examiner and session.part == 2:
+        session.part = 3
+
+    is_complete = "end of the speaking test" in last_examiner and session.part == 3
+
+    if is_complete:
+        session.is_complete = True
+        await db.speaking_sessions.replace_one({"session_id": session.session_id}, session.model_dump())
+        return RespondResponse(
+            examiner_text="The speaking test is now complete. You can request your feedback.",
+            audio_url="",
+            part=3,
+            is_complete=True,
+        )
+
+    # Convert history format for agent
+    history_dicts = [{"role": msg.role, "content": msg.content} for msg in session.history]
+
     # Get examiner's next response
     examiner_text = await examiner_respond(
-        part=session["part"],
-        history=session["history"],
+        part=session.part,
+        history=history_dicts,
     )
 
-    session["history"].append({
-        "role": "examiner",
-        "content": examiner_text,
-    })
+    session.history.append(ChatMessage(role="examiner", content=examiner_text))
 
     # Check if THIS response signals completion
     is_complete = "end of the speaking test" in examiner_text.lower()
+    if is_complete:
+        session.is_complete = True
+
+    # Save updated session
+    await db.speaking_sessions.replace_one({"session_id": session.session_id}, session.model_dump())
 
     # Generate TTS
-    tts_voice = VOICES.get(session["voice"], VOICES["british_female"])
+    tts_voice = VOICES.get(session.voice, VOICES["british_female"])
     audio_path = await synthesize_speech(text=examiner_text, voice=tts_voice)
 
     return RespondResponse(
         examiner_text=examiner_text,
         audio_url=f"/api/speaking/audio/{os.path.basename(audio_path)}",
-        part=session["part"],
+        part=session.part,
         is_complete=is_complete,
     )
 
@@ -149,6 +163,7 @@ async def respond_text(req: RespondRequest):
 async def respond_audio(
     session_id: str = Form(...),
     audio: UploadFile = File(...),
+    db=Depends(get_db)
 ):
     """Candidate sends audio; it's transcribed then processed like text."""
     # Save uploaded audio to temp file
@@ -167,19 +182,32 @@ async def respond_audio(
 
     # Process as text response
     req = RespondRequest(session_id=session_id, candidate_text=candidate_text)
-    return await respond_text(req)
+    return await respond_text(req, db)
 
 
 # ---- Get feedback ----
 
 @router.post("/feedback", response_model=FeedbackResponse)
-async def get_feedback(session_id: str = Form(...)):
+async def get_feedback(session_id: str = Form(...), db=Depends(get_db)):
     """Generates detailed IELTS feedback for the completed speaking test."""
-    session = sessions.get(session_id)
-    if not session:
-        raise ValueError("Session not found.")
+    
+    session_doc = await db.speaking_sessions.find_one({"session_id": session_id})
+    if not session_doc:
+        raise HTTPException(status_code=404, detail="Session not found.")
+        
+    session = SpeakingSession(**session_doc)
+    
+    # Use cached feedback if already generated
+    if session.feedback:
+        return FeedbackResponse(feedback=session.feedback)
 
-    feedback = await generate_feedback(session["history"])
+    history_dicts = [{"role": msg.role, "content": msg.content} for msg in session.history]
+    feedback = await generate_feedback(history_dicts)
+    
+    # Save feedback to DB
+    session.feedback = feedback
+    await db.speaking_sessions.replace_one({"session_id": session.session_id}, session.model_dump())
+    
     return FeedbackResponse(feedback=feedback)
 
 
