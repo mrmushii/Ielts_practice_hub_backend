@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from routers.core import router as core_router
+from routers.speaking import router as speaking_router
 
 load_dotenv()
 
@@ -22,6 +23,7 @@ app.add_middleware(
 
 # Register routers
 app.include_router(core_router)
+app.include_router(speaking_router)
 
 
 @app.get("/health")
