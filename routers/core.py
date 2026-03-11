@@ -1,0 +1,93 @@
+"""
+Core API routes — chat, speech-to-text, and text-to-speech.
+These are shared infrastructure endpoints used by all IELTS modules.
+"""
+
+from fastapi import APIRouter, UploadFile, File, Form
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from langchain_core.messages import SystemMessage, HumanMessage
+from utils.llm import get_llm
+from utils.stt import transcribe_audio
+from utils.tts import synthesize_speech, VOICES
+import tempfile
+import os
+
+router = APIRouter(prefix="/api", tags=["core"])
+
+
+# ---- Schemas ----
+
+class ChatRequest(BaseModel):
+    message: str
+    system_prompt: str = "You are a helpful assistant."
+
+
+class ChatResponse(BaseModel):
+    reply: str
+
+
+class TranscriptionResponse(BaseModel):
+    text: str
+    duration: float | None
+
+
+class TTSRequest(BaseModel):
+    text: str
+    voice: str = "british_female"
+    rate: str = "+0%"
+
+
+# ---- Chat Endpoint ----
+
+@router.post("/chat", response_model=ChatResponse)
+async def chat(req: ChatRequest):
+    """Simple chat endpoint to test the LLM connection."""
+    llm = get_llm()
+    messages = [
+        SystemMessage(content=req.system_prompt),
+        HumanMessage(content=req.message),
+    ]
+    response = llm.invoke(messages)
+    return ChatResponse(reply=response.content)
+
+
+# ---- Speech-to-Text ----
+
+@router.post("/stt", response_model=TranscriptionResponse)
+async def speech_to_text(audio: UploadFile = File(...)):
+    """Transcribes uploaded audio using Groq Whisper API."""
+    # Save uploaded file to temp
+    suffix = os.path.splitext(audio.filename or ".webm")[1]
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        content = await audio.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        result = await transcribe_audio(tmp_path)
+        return TranscriptionResponse(text=result["text"], duration=result["duration"])
+    finally:
+        os.unlink(tmp_path)
+
+
+# ---- Text-to-Speech ----
+
+@router.post("/tts")
+async def text_to_speech(req: TTSRequest):
+    """Converts text to speech and returns the MP3 audio file."""
+    voice = VOICES.get(req.voice, VOICES["british_female"])
+    audio_path = await synthesize_speech(text=req.text, voice=voice, rate=req.rate)
+    return FileResponse(
+        audio_path,
+        media_type="audio/mpeg",
+        filename="speech.mp3",
+    )
+
+
+# ---- Available Voices ----
+
+@router.get("/voices")
+async def list_voices():
+    """Lists available TTS voices."""
+    return {"voices": list(VOICES.keys())}
