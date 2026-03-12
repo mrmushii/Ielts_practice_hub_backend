@@ -4,7 +4,7 @@ Omni-Tutor Agent equipped with Search, Grounding, and RAG tools.
 
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_core.tools import tool
-from langchain.agents import create_tool_calling_agent, AgentExecutor
+from langchain_classic.agents import create_tool_calling_agent, AgentExecutor
 from langchain_core.prompts import ChatPromptTemplate
 from utils.llm import get_llm
 
