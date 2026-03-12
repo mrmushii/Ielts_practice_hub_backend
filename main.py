@@ -8,6 +8,7 @@ from routers.writing import router as writing_router
 from routers.reading import router as reading_router
 from routers.listening import router as listening_router
 from routers.tutor import router as tutor_router
+from routers.documents import router as documents_router
 from utils.db import connect_to_mongo, close_mongo_connection
 
 load_dotenv() # Loads LANGCHAIN_* vars for LangSmith tracing
@@ -43,6 +44,7 @@ app.include_router(writing_router)
 app.include_router(reading_router)
 app.include_router(listening_router)
 app.include_router(tutor_router)
+app.include_router(documents_router)
 
 
 @app.get("/health")
