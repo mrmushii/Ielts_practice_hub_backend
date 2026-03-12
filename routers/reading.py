@@ -5,7 +5,7 @@ Reading test API routes and sample passages.
 from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import List
-from agents.reading_agent import evaluate_reading_answer
+from agents.reading_agent import evaluate_reading_answer, generate_reading_test
 
 router = APIRouter(prefix="/api/reading", tags=["reading"])
 
@@ -74,6 +74,11 @@ SAMPLE_PASSAGES = [
 ]
 
 # ---- Endpoints ----
+
+@router.get("/generate", response_model=Passage)
+async def generate_passage():
+    """Dynamically generates a new IELTS reading passage with 3 varied questions."""
+    return await generate_reading_test()
 
 @router.get("/passages", response_model=List[Passage])
 async def get_passages():

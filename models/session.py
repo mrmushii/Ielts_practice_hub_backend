@@ -15,6 +15,7 @@ class SpeakingSession(BaseModel):
     session_id: str
     part: int = 1
     voice: str = "british_female"
+    topic_seed: str = "general"
     history: List[ChatMessage] = []
     feedback: Optional[str] = None
     is_complete: bool = False

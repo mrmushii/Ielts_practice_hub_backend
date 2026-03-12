@@ -24,27 +24,28 @@ RULES:
 """
 
 PART2_SYSTEM = """You are an official IELTS Speaking Examiner conducting Part 2 of the speaking test.
+The core theme for this specific test session is: {topic_seed}.
 
 RULES:
-- Give the candidate a cue card topic. Format it clearly:
+- Give the candidate a cue card topic highly related to the theme: {topic_seed}.
+- Format it clearly:
   "I'd like you to describe [topic]. You should say:
    • [point 1]
    • [point 2]
    • [point 3]
    And explain [final point].
    You have 1 minute to prepare and then 1-2 minutes to speak."
-- Choose from recent, common IELTS topics (a memorable journey, a person who inspired you, a skill you learned, etc.)
 - After the candidate speaks, ask 1-2 brief follow-up questions related to the topic.
 - Then say: "Thank you. Let's move on to Part 3."
 - Do NOT evaluate during the test. Just listen and ask follow-ups.
 """
 
 PART3_SYSTEM = """You are an official IELTS Speaking Examiner conducting Part 3 of the speaking test.
+The core theme for this specific test session is: {topic_seed}.
 
 RULES:
-- Ask abstract, discussion-style questions related to the Part 2 topic.
-- Questions should require the candidate to analyze, compare, speculate, or give opinions.
-- Examples: "Do you think [topic] has changed over the years?", "Why do you think some people prefer [X] over [Y]?"
+- Ask abstract, discussion-style questions related to the theme: {topic_seed}.
+- Questions should require the candidate to analyze, compare, speculate, or give opinions on this theme.
 - Ask 4-5 questions total.
 - Push the candidate to elaborate: "Can you explain what you mean by that?" or "Could you give an example?"
 - After 4-5 questions, conclude: "Thank you very much. That is the end of the speaking test."
@@ -79,15 +80,19 @@ Be encouraging but honest. Use specific examples from the conversation.
 """
 
 
-def get_system_prompt(part: int) -> str:
+def get_system_prompt(part: int, topic_seed: str) -> str:
     """Returns the system prompt for the given IELTS speaking part."""
-    prompts = {1: PART1_SYSTEM, 2: PART2_SYSTEM, 3: PART3_SYSTEM}
+    prompts = {
+        1: PART1_SYSTEM, 
+        2: PART2_SYSTEM.replace("{topic_seed}", topic_seed), 
+        3: PART3_SYSTEM.replace("{topic_seed}", topic_seed)
+    }
     return prompts.get(part, PART1_SYSTEM)
 
 
-def build_messages(part: int, history: list[dict]) -> list:
+def build_messages(part: int, topic_seed: str, history: list[dict]) -> list:
     """Builds the LangChain message list from conversation history."""
-    messages = [SystemMessage(content=get_system_prompt(part))]
+    messages = [SystemMessage(content=get_system_prompt(part, topic_seed))]
 
     for msg in history:
         if msg["role"] == "examiner":
@@ -98,19 +103,20 @@ def build_messages(part: int, history: list[dict]) -> list:
     return messages
 
 
-async def examiner_respond(part: int, history: list[dict]) -> str:
+async def examiner_respond(part: int, topic_seed: str, history: list[dict]) -> str:
     """
     Generates the examiner's next response based on conversation history.
 
     Args:
         part: IELTS speaking part (1, 2, or 3)
+        topic_seed: Random string theme to anchor Parts 2 and 3
         history: List of {"role": "examiner"|"candidate", "content": "..."}
 
     Returns:
         The examiner's response text.
     """
     llm = get_llm()
-    messages = build_messages(part, history)
+    messages = build_messages(part, topic_seed, history)
     response = llm.invoke(messages)
     return response.content
 

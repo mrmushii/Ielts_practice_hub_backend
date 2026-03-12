@@ -8,9 +8,25 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from pydantic import BaseModel, Field
+from typing import List
 from pymongo import MongoClient
 from utils.llm import get_llm
 import os
+import uuid
+
+# ---- Generation Schemas ----
+
+class GeneratedQuestion(BaseModel):
+    id: str = Field(description="A unique generic ID like q1, q2, q3")
+    text: str = Field(description="The question text to ask the student")
+    type: str = Field(description="Must be one of: 'mcq', 'tfng', 'fill_blank'")
+
+class GeneratedPassage(BaseModel):
+    id: str = Field(description="A unique random string ID for this passage")
+    title: str = Field(description="A formal academic title for the passage")
+    text: str = Field(description="A 300-400 word dense academic passage suitable for IELTS reading practice")
+    questions: List[GeneratedQuestion] = Field(description="Exactly 3 diverse reading comprehension questions based ONLY on the passage text")
 
 # Create embeddings model once to avoid reloading on every request
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
@@ -45,6 +61,35 @@ USER'S ANSWER:
 
 YOUR EVALUATION (Start with CORRECT or INCORRECT, then space, then explanation):
 """
+
+READING_GENERATOR_PROMPT = """You are an expert Cambridge IELTS Reading Test creator.
+Generate a completely original, dense, university-level academic reading passage.
+The topic should be randomly selected from common IELTS themes (e.g., Space Exploration, Paleontology, Marine Biology, Ancient Civilizations, Cognitive Psychology).
+
+Then, generate EXACTLY 3 questions based strictley on the passage you wrote.
+One must be 'tfng' (True/False/Not Given).
+One must be 'mcq' (Multiple Choice). For MCQ just write the question and the options A, B, C, D in the text field.
+One must be 'fill_blank' (Fill in the blanks).
+
+Output strictly matching the requested JSON schema.
+"""
+
+async def generate_reading_test() -> dict:
+    """Generates a dynamic IELTS reading passage with questions."""
+    llm = get_llm()
+    structured_llm = llm.with_structured_output(GeneratedPassage)
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", READING_GENERATOR_PROMPT),
+        ("user", "Generate a new IELTS reading passage and 3 questions now.")
+    ])
+    
+    chain = prompt | structured_llm
+    result: GeneratedPassage = chain.invoke({})
+    
+    # Ensure ID is truly unique for MongoDB
+    result.id = f"passage_{uuid.uuid4().hex[:8]}"
+    return result.model_dump()
 
 
 def load_passage_into_vector_manager(passage_id: str, text: str):

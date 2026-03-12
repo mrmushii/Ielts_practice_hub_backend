@@ -14,6 +14,7 @@ from models.session import SpeakingSession, ChatMessage
 import tempfile
 import os
 import uuid
+import random
 
 router = APIRouter(prefix="/api/speaking", tags=["speaking"])
 
@@ -49,8 +50,12 @@ async def start_session(voice: str = "british_female", db=Depends(get_db)):
     """Starts a new IELTS speaking test session. Examiner introduces and asks the first question."""
     session_id = uuid.uuid4().hex
 
+    # Randomize topic to ensure infinite test variety
+    topics = ["Technology and AI", "Environmental Protection", "Childhood Memories", "Modern Transportation", "Global Tourism", "Arts and Culture", "Space Exploration", "Social Media", "Historical Events", "Healthy Lifestyle"]
+    topic_seed = random.choice(topics)
+
     # Get examiner's opening (Part 1 intro + first question)
-    examiner_text = await examiner_respond(part=1, history=[])
+    examiner_text = await examiner_respond(part=1, topic_seed=topic_seed, history=[])
 
     # Save to history
     history = [ChatMessage(role="examiner", content=examiner_text)]
@@ -64,6 +69,7 @@ async def start_session(voice: str = "british_female", db=Depends(get_db)):
         session_id=session_id,
         part=1,
         voice=voice,
+        topic_seed=topic_seed,
         history=history
     )
     
@@ -132,6 +138,7 @@ async def respond_text(req: RespondRequest, db=Depends(get_db)):
     # Get examiner's next response
     examiner_text = await examiner_respond(
         part=session.part,
+        topic_seed=session.topic_seed,
         history=history_dicts,
     )
 
