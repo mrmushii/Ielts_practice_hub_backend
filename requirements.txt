@@ -10,14 +10,13 @@ langchain-openai>=0.3.0,<1.0.0
 
 # ---- Speech (STT / TTS) ----
 groq>=0.25.0,<1.0.0
-edge-tts>=6.1.0,<7.0.0
+edge-tts>=7.2.7
 
 # ---- MongoDB ----
 motor>=3.6.0,<4.0.0
 pymongo>=4.10.0,<5.0.0
 
 # ---- RAG (Reading Module) ----
-sentence-transformers
-faiss-cpu
-langchain-community
-langchain-huggingface
+langchain-mongodb
+pillow
+duckduckgo-search

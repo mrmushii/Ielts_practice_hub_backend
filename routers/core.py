@@ -91,3 +91,19 @@ async def text_to_speech(req: TTSRequest):
 async def list_voices():
     """Lists available TTS voices."""
     return {"voices": list(VOICES.keys())}
+
+
+# ---- Serve Audio Files ----
+
+@router.get("/audio/{filename}")
+async def get_audio_file(filename: str):
+    """Serves generated audio files."""
+    from utils.tts import AUDIO_DIR
+    import os
+    from fastapi import HTTPException
+    
+    file_path = os.path.join(AUDIO_DIR, filename)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Audio file not found")
+        
+    return FileResponse(file_path, media_type="audio/mpeg")

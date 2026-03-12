@@ -76,14 +76,13 @@ async def generate_listening_test(topic: str = "A student inquiring about a gym 
     
     for i, line in enumerate(test_data.dialogue):
         voice = voice_map.get(line.speaker, "en-US-AriaNeural")
-        # Synthesize audio and get the relative URL
-        audio_url = await synthesize_speech(text=line.text, voice=voice)
+        audio_filename = await synthesize_speech(text=line.text, voice=voice)
         
         dialogue_with_audio.append({
             "id": f"line_{i}",
             "speaker": line.speaker,
             "text": line.text,
-            "audio_url": audio_url
+            "audio_url": f"/api/audio/{audio_filename}"
         })
         
     return {

@@ -47,4 +47,4 @@ async def synthesize_speech(
     communicate = edge_tts.Communicate(text=text, voice=voice, rate=rate)
     await communicate.save(output_path)
 
-    return output_path
+    return filename
