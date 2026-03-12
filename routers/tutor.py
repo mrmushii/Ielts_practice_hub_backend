@@ -13,6 +13,7 @@ router = APIRouter(prefix="/api/tutor", tags=["tutor"])
 class ChatRequest(BaseModel):
     message: str
     essay_context: Optional[str] = None
+    history: Optional[list] = []
 
 class ChatResponse(BaseModel):
     response: str
@@ -20,5 +21,5 @@ class ChatResponse(BaseModel):
 @router.post("/chat", response_model=ChatResponse)
 async def ask_tutor(req: ChatRequest):
     """Sends a message to the Omni-Tutor agent."""
-    reply = await chat_with_tutor(req.message, essay_context=req.essay_context)
+    reply = await chat_with_tutor(req.message, essay_context=req.essay_context, history=req.history)
     return ChatResponse(response=reply)

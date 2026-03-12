@@ -4,8 +4,9 @@ Omni-Tutor Agent equipped with Search, Grounding, and RAG tools.
 
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_core.tools import tool
-from langchain_classic.agents import create_tool_calling_agent, AgentExecutor
+from langchain.agents import create_tool_calling_agent, AgentExecutor
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import HumanMessage, AIMessage
 from utils.llm import get_llm
 
 @tool
@@ -44,24 +45,21 @@ search_tool = DuckDuckGoSearchRun(
 
 tools = [search_tool, google_search_grounding, search_uploaded_documents]
 
-async def chat_with_tutor(message: str, essay_context: str = None) -> str:
-    """Invokes the Omni-Tutor, optionally injecting the user's current writing draft."""
+async def chat_with_tutor(message: str, essay_context: str = None, history: list = None) -> str:
+    """Invokes the Omni-Tutor, optionally injecting context and history."""
     llm = get_llm()
     
     system_text = (
-        "You are an expert IELTS Omni-Tutor. You help students prepare for their IELTS exam. "
-        "You MUST use your tools to provide accurate info. Use 'google_search_grounding' for official rules. "
-        "Use 'internet_search' for general or recent topics. Use 'search_uploaded_documents' for any PDF files the user uploads."
+        "You are an expert IELTS Omni-Tutor. You MUST use your tools to provide accurate info. "
+        "User can upload PDF documents; ALWAYS check 'search_uploaded_documents' if the user mentions a file or asks a complex question about IELTS rules/materials. "
+        "Use 'google_search_grounding' for official website-only rules, and 'internet_search' for general news/topics."
     )
     
     if essay_context and essay_context.strip():
         system_text += (
-            "\n\nCRITICAL CONTEXT: The user is currently writing an essay in a split-pane Canvas next to this chat. "
-            "Because this is an interactive session, DO NOT grade the essay or give a band score yet. "
-            "Instead, read their current draft and act as a live coach. Focus on giving them 1 or 2 specific, actionable pieces of "
-            "advice (e.g., suggesting a better vocabulary word, pointing out a run-on sentence, or advising on essay structure). "
-            "Keep your responses concise, encouraging, and directly relevant to the text they have written so far.\n\n"
-            f"--- THE USER'S CURRENT ESSAY DRAFT ---\n{essay_context}\n--------------------------------------"
+            "\n\nCRITICAL CONTEXT: The user is currently writing an essay in a split-pane Canvas. "
+            "DO NOT grade it yet. Focus on live coaching/suggestions for the provided draft below.\n\n"
+            f"--- ESSAY DRAFT ---\n{essay_context}\n--------------------"
         )
         
     dynamic_prompt = ChatPromptTemplate.from_messages([
@@ -74,5 +72,13 @@ async def chat_with_tutor(message: str, essay_context: str = None) -> str:
     agent = create_tool_calling_agent(llm, tools, dynamic_prompt)
     agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
     
-    result = await agent_executor.ainvoke({"input": message, "chat_history": []})
+    chat_history = []
+    if history:
+        for msg in history:
+            if msg.get("role") == "user":
+                chat_history.append(HumanMessage(content=msg.get("content", "")))
+            elif msg.get("role") == "tutor":
+                chat_history.append(AIMessage(content=msg.get("content", "")))
+    
+    result = await agent_executor.ainvoke({"input": message, "chat_history": chat_history})
     return result["output"]
