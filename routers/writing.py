@@ -56,11 +56,13 @@ async def get_sample_prompts():
         "task1": [
             {
                 "id": "t1_1",
-                "text": "The chart below shows the number of men and women in further education in Britain in three periods and whether they were studying full-time or part-time. Summarise the information by selecting and reporting the main features, and make comparisons where relevant."
+                "text": "The chart below shows the number of men and women in further education in Britain in three periods and whether they were studying full-time or part-time. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
+                "image_url": "/images/task1_pie_chart.png"
             },
             {
                 "id": "t1_2",
-                "text": "The maps below show the centre of a small town called Islip as it is now, and plans for its development. Summarise the information by selecting and reporting the main features, and make comparisons where relevant."
+                "text": "The maps below show the centre of a small town called Islip as it is now, and plans for its development. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
+                "image_url": "/images/task1_map.png"
             }
         ],
         "task2": [
