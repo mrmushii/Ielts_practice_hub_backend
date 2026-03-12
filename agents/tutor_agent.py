@@ -4,7 +4,7 @@ Omni-Tutor Agent equipped with Search, Grounding, and RAG tools.
 
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_core.tools import tool
-from langchain.agents import create_tool_calling_agent, AgentExecutor
+from langchain_classic.agents import create_tool_calling_agent, AgentExecutor
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, AIMessage
 from utils.llm import get_llm
@@ -18,8 +18,13 @@ def google_search_grounding(query: str) -> str:
 
 @tool
 def search_uploaded_documents(query: str) -> str:
-    """Use this tool to search through the user's uploaded PDF documents or textbooks. 
-    Use this when the user asks about content from files they recently attached or mentioned."""
+    """Search for content across any PDF documents or textbooks uploaded by the user. 
+    USE THIS TOOL whenever the user asks a question about their attached files.
+    Input 'query' must be specific keywords or questions derived from the user message. 
+    Do NOT pass an empty string."""
+    if not query or not query.strip():
+        return "Error: Search query cannot be empty. Please provide specific keywords to search in your documents."
+        
     from pymongo import MongoClient
     import os
     from langchain_mongodb import MongoDBAtlasVectorSearch
@@ -27,6 +32,7 @@ def search_uploaded_documents(query: str) -> str:
     
     uri = os.getenv("MONGODB_URI") or "mongodb://localhost:27017"
     client = MongoClient(uri)
+    # Ensure we use the correct collection name consistently
     collection = client["ielts_platform"]["vector_index"]
     
     embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
@@ -35,8 +41,14 @@ def search_uploaded_documents(query: str) -> str:
         embedding=embeddings,
         index_name="vector_index"
     )
+    
     docs = vectorstore.similarity_search(query, k=3)
-    return "\n\n".join([doc.page_content for doc in docs])
+    
+    if not docs:
+        return "No relevant information found in your uploaded documents. Perhaps the document doesn't contain that specific info, or you haven't uploaded one yet."
+    
+    content = "\n\n".join([doc.page_content for doc in docs])
+    return f"Retrieved from documents:\n\n{content}"
 
 search_tool = DuckDuckGoSearchRun(
     name="internet_search", 
