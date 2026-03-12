@@ -7,6 +7,8 @@ from typing import List
 from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage
 from utils.llm import get_llm
+import os
+from groq import AsyncGroq
 
 # ---- Structured Output Schema ----
 
@@ -34,6 +36,34 @@ Strictly output your evaluation in the required JSON format.
 Be highly accurate and strict. A perfect 9 is extremely rare.
 Provide clear, actionable feedback and rewrite a section to demonstrate a Band 8+ standard. 
 """
+
+async def extract_text_from_image(base64_image: str) -> str:
+    """Uses Groq Vision (llama-3.2-11b-vision-preview) to extract text from a base64 encoded image."""
+    client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
+    
+    prompt = "Read and extract all the text from this handwritten or typed essay image. Provide ONLY the exact text as it appears. Do not add any conversational text or formatting outside of the essay content."
+    
+    response = await client.chat.completions.create(
+        model="llama-3.2-11b-vision-preview",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64_image}"
+                        }
+                    }
+                ]
+            }
+        ],
+        temperature=0.0,
+        max_tokens=2048,
+    )
+    
+    return response.choices[0].message.content
 
 async def evaluate_essay(task_type: int, prompt_text: str, essay_text: str) -> dict:
     """

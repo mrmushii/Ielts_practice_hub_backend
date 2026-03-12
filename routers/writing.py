@@ -16,6 +16,9 @@ class EvaluateRequest(BaseModel):
     prompt_text: str
     essay_text: str
 
+class OcrRequest(BaseModel):
+    image_base64: str
+
 class EvaluateResponse(BaseModel):
     task_response_score: float
     coherence_score: float
@@ -27,6 +30,14 @@ class EvaluateResponse(BaseModel):
     improved_version: str
 
 # ---- Endpoints ----
+
+from agents.writing_agent import extract_text_from_image
+
+@router.post("/upload_image")
+async def ocr_essay(req: OcrRequest):
+    """Extracts text from an uploaded handwritten essay image using Groq Vision."""
+    extracted_text = await extract_text_from_image(req.image_base64)
+    return {"extracted_text": extracted_text}
 
 @router.post("/evaluate", response_model=EvaluateResponse)
 async def evaluate(req: EvaluateRequest):
