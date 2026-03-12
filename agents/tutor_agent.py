@@ -16,28 +16,33 @@ def google_search_grounding(query: str) -> str:
     return search.run(f"site:ielts.org OR site:britishcouncil.org {query}")
 
 @tool
-def ielts_material_retriever(query: str) -> str:
-    """Use this to search through the student's available reading materials in the database."""
-    from agents.reading_agent import get_vector_collection
+def search_uploaded_documents(query: str) -> str:
+    """Use this tool to search through the user's uploaded PDF documents or textbooks. 
+    Use this when the user asks about content from files they recently attached or mentioned."""
+    from pymongo import MongoClient
+    import os
     from langchain_mongodb import MongoDBAtlasVectorSearch
     from langchain_huggingface import HuggingFaceEmbeddings
     
-    collection = get_vector_collection()
+    uri = os.getenv("MONGODB_URI") or "mongodb://localhost:27017"
+    client = MongoClient(uri)
+    collection = client["ielts_platform"]["vector_index"]
+    
     embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
     vectorstore = MongoDBAtlasVectorSearch(
         collection=collection,
         embedding=embeddings,
         index_name="vector_index"
     )
-    docs = vectorstore.similarity_search(query, k=2)
-    return "\n".join([doc.page_content for doc in docs])
+    docs = vectorstore.similarity_search(query, k=3)
+    return "\n\n".join([doc.page_content for doc in docs])
 
 search_tool = DuckDuckGoSearchRun(
     name="internet_search", 
     description="Use this tool to search the internet for general queries or recent topics."
 )
 
-tools = [search_tool, google_search_grounding, ielts_material_retriever]
+tools = [search_tool, google_search_grounding, search_uploaded_documents]
 
 async def chat_with_tutor(message: str, essay_context: str = None) -> str:
     """Invokes the Omni-Tutor, optionally injecting the user's current writing draft."""
@@ -46,7 +51,7 @@ async def chat_with_tutor(message: str, essay_context: str = None) -> str:
     system_text = (
         "You are an expert IELTS Omni-Tutor. You help students prepare for their IELTS exam. "
         "You MUST use your tools to provide accurate info. Use 'google_search_grounding' for official rules. "
-        "Use 'internet_search' for general or recent topics. Use 'ielts_material_retriever' for reading passages."
+        "Use 'internet_search' for general or recent topics. Use 'search_uploaded_documents' for any PDF files the user uploads."
     )
     
     if essay_context and essay_context.strip():

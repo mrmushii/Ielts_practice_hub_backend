@@ -1,7 +1,8 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 import os
 import shutil
-from utils.db import get_db
+import traceback
+from pymongo import MongoClient
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -28,8 +29,9 @@ async def upload_document(file: UploadFile = File(...)):
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         chunks = text_splitter.split_documents(documents)
         
-        db = get_db()
-        collection = db["vector_index"]
+        uri = os.getenv("MONGODB_URI") or "mongodb://localhost:27017"
+        mongo_client = MongoClient(uri)
+        collection = mongo_client["ielts_platform"]["vector_index"]
         
         embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
         
@@ -44,6 +46,8 @@ async def upload_document(file: UploadFile = File(...)):
         return {"status": "success", "chunks_added": len(chunks), "filename": file.filename}
         
     except Exception as e:
+        full_traceback = traceback.format_exc()
+        print(f"Error uploading document: {full_traceback}")
         raise HTTPException(status_code=500, detail=f"Failed to process document: {str(e)}")
     finally:
         if os.path.exists(temp_path):
