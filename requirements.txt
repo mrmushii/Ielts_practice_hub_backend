@@ -7,6 +7,7 @@ python-multipart>=0.0.20,<1.0.0
 # ---- LangChain + Groq LLM ----
 langchain-core>=0.3.0,<1.0.0
 langchain-openai>=0.3.0,<1.0.0
+langgraph>=0.2.60,<1.0.0
 
 # ---- Speech (STT / TTS) ----
 groq>=0.25.0,<1.0.0

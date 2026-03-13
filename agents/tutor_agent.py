@@ -2,11 +2,18 @@
 Omni-Tutor Agent equipped with Search, Grounding, and RAG tools.
 """
 
+import os
+import uuid
+from functools import lru_cache
+
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_core.tools import tool
 from langchain_classic.agents import create_tool_calling_agent, AgentExecutor
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import BaseMessage
+from langgraph.prebuilt import create_react_agent
+from langgraph.checkpoint.memory import MemorySaver
 from utils.llm import get_llm
 
 @tool
@@ -57,22 +64,62 @@ search_tool = DuckDuckGoSearchRun(
 
 tools = [search_tool, google_search_grounding, search_uploaded_documents]
 
-async def chat_with_tutor(message: str, essay_context: str = None, history: list = None) -> str:
-    """Invokes the Omni-Tutor, optionally injecting context and history."""
-    llm = get_llm()
-    
+
+def _build_system_prompt(essay_context: str | None = None) -> str:
     system_text = (
         "You are an expert IELTS Omni-Tutor. You MUST use your tools to provide accurate info. "
         "User can upload PDF documents; ALWAYS check 'search_uploaded_documents' if the user mentions a file or asks a complex question about IELTS rules/materials. "
         "Use 'google_search_grounding' for official website-only rules, and 'internet_search' for general news/topics."
     )
-    
+
     if essay_context and essay_context.strip():
         system_text += (
             "\n\nCRITICAL CONTEXT: The user is currently writing an essay in a split-pane Canvas. "
             "DO NOT grade it yet. Focus on live coaching/suggestions for the provided draft below.\n\n"
             f"--- ESSAY DRAFT ---\n{essay_context}\n--------------------"
         )
+    return system_text
+
+
+def _build_chat_history(history: list | None) -> list[BaseMessage]:
+    chat_history: list[BaseMessage] = []
+    if history:
+        for msg in history:
+            if msg.get("role") == "user":
+                chat_history.append(HumanMessage(content=msg.get("content", "")))
+            elif msg.get("role") == "tutor":
+                chat_history.append(AIMessage(content=msg.get("content", "")))
+    return chat_history
+
+
+@lru_cache(maxsize=1)
+def _get_checkpointer():
+    """Returns a LangGraph checkpointer. Defaults to memory with optional Mongo mode."""
+    mode = os.getenv("LANGGRAPH_CHECKPOINTER", "memory").lower().strip()
+    if mode == "mongodb":
+        try:
+            # Optional dependency path; if unavailable, fallback to memory.
+            from langgraph.checkpoint.mongodb import MongoDBSaver  # type: ignore
+
+            uri = os.getenv("MONGODB_URI") or "mongodb://localhost:27017"
+            db_name = os.getenv("LANGGRAPH_MONGO_DB", "ielts_platform")
+            collection = os.getenv("LANGGRAPH_MONGO_COLLECTION", "langgraph_checkpoints")
+            return MongoDBSaver.from_conn_string(uri, db_name=db_name, collection_name=collection)
+        except Exception:
+            return MemorySaver()
+    return MemorySaver()
+
+
+@lru_cache(maxsize=1)
+def _get_tutor_graph():
+    llm = get_llm()
+    return create_react_agent(model=llm, tools=tools, checkpointer=_get_checkpointer())
+
+
+async def _chat_with_tutor_legacy(message: str, essay_context: str = None, history: list = None) -> str:
+    """Legacy tutor execution path retained as fallback."""
+    llm = get_llm()
+    system_text = _build_system_prompt(essay_context)
         
     dynamic_prompt = ChatPromptTemplate.from_messages([
         ("system", system_text),
@@ -84,13 +131,61 @@ async def chat_with_tutor(message: str, essay_context: str = None, history: list
     agent = create_tool_calling_agent(llm, tools, dynamic_prompt)
     agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
     
-    chat_history = []
-    if history:
-        for msg in history:
-            if msg.get("role") == "user":
-                chat_history.append(HumanMessage(content=msg.get("content", "")))
-            elif msg.get("role") == "tutor":
-                chat_history.append(AIMessage(content=msg.get("content", "")))
+    chat_history = _build_chat_history(history)
     
     result = await agent_executor.ainvoke({"input": message, "chat_history": chat_history})
     return result["output"]
+
+
+async def _chat_with_tutor_langgraph(
+    message: str,
+    essay_context: str = None,
+    history: list = None,
+    session_id: str | None = None,
+) -> str:
+    """LangGraph tutor execution path."""
+    graph = _get_tutor_graph()
+    thread_id = (session_id or "").strip() or f"tutor-{uuid.uuid4().hex}"
+    system_text = _build_system_prompt(essay_context)
+
+    messages: list[BaseMessage] = []
+    messages.append(HumanMessage(content=f"SYSTEM CONTEXT:\n{system_text}"))
+    messages.extend(_build_chat_history(history))
+    messages.append(HumanMessage(content=message))
+
+    result = await graph.ainvoke(
+        {"messages": messages},
+        config={"configurable": {"thread_id": thread_id}},
+    )
+
+    output_messages = result.get("messages", [])
+    for msg in reversed(output_messages):
+        content = getattr(msg, "content", "")
+        if isinstance(msg, AIMessage) and content:
+            return content
+    return "I could not generate a response this turn. Please try again."
+
+
+async def chat_with_tutor(
+    message: str,
+    essay_context: str = None,
+    history: list = None,
+    session_id: str | None = None,
+    use_langgraph: bool | None = True,
+) -> str:
+    """Invokes Omni-Tutor with LangGraph primary path and legacy fallback."""
+    feature_enabled = (os.getenv("ENABLE_LANGGRAPH_TUTOR", "true").lower() == "true")
+    should_use_langgraph = bool(use_langgraph) and feature_enabled
+
+    if should_use_langgraph:
+        try:
+            return await _chat_with_tutor_langgraph(
+                message=message,
+                essay_context=essay_context,
+                history=history,
+                session_id=session_id,
+            )
+        except Exception:
+            return await _chat_with_tutor_legacy(message, essay_context=essay_context, history=history)
+
+    return await _chat_with_tutor_legacy(message, essay_context=essay_context, history=history)

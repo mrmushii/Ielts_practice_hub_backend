@@ -16,6 +16,8 @@ class ChatRequest(BaseModel):
     message: str
     essay_context: Optional[str] = None
     history: Optional[list] = []
+    session_id: Optional[str] = None
+    use_langgraph: Optional[bool] = True
 
 class ChatResponse(BaseModel):
     response: str
@@ -23,7 +25,13 @@ class ChatResponse(BaseModel):
 @router.post("/chat", response_model=ChatResponse)
 async def ask_tutor(req: ChatRequest):
     """Sends a message to the Omni-Tutor agent."""
-    reply = await chat_with_tutor(req.message, essay_context=req.essay_context, history=req.history)
+    reply = await chat_with_tutor(
+        req.message,
+        essay_context=req.essay_context,
+        history=req.history,
+        session_id=req.session_id,
+        use_langgraph=req.use_langgraph,
+    )
     return ChatResponse(response=reply)
 
 @router.post("/transcribe")
