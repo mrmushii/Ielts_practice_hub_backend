@@ -19,6 +19,7 @@ class EvaluateRequest(BaseModel):
     task_type: int  # 1 or 2
     prompt_text: str
     essay_text: str
+    use_langgraph: bool = True
 
 class OcrRequest(BaseModel):
     image_base64: str
@@ -49,7 +50,8 @@ async def evaluate(req: EvaluateRequest):
     feedback = await evaluate_essay(
         task_type=req.task_type,
         prompt_text=req.prompt_text,
-        essay_text=req.essay_text
+        essay_text=req.essay_text,
+        use_langgraph=req.use_langgraph,
     )
     return EvaluateResponse(**feedback)
 

@@ -16,6 +16,7 @@ RECENT_SCENARIOS = deque(maxlen=20)
 class GenerateRequest(BaseModel):
     topic: Optional[str] = "A student inquiring about a gym membership"
     seed: Optional[str] = None
+    use_langgraph: Optional[bool] = True
 
 @router.post("/generate")
 async def generate_test(req: GenerateRequest):
@@ -27,6 +28,7 @@ async def generate_test(req: GenerateRequest):
         topic=req.topic or "A student inquiring about a gym membership",
         session_seed=seed,
         recent_scenarios=list(RECENT_SCENARIOS),
+        use_langgraph=bool(req.use_langgraph),
     )
 
     title = (result.get("title") or "").strip()

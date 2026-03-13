@@ -3,16 +3,19 @@ IELTS Writing Examiner Agent.
 Grading essays based on the 4 official IELTS rubrics.
 """
 
-from typing import List
+from typing import List, TypedDict
 from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage
 from utils.llm import get_llm
 import os
+import uuid
+from functools import lru_cache
 from groq import AsyncGroq
 from pathlib import Path
 import random
-import uuid
 from PIL import Image, ImageDraw
+from langgraph.graph import StateGraph, START, END
+from utils.langgraph_runtime import get_langgraph_checkpointer
 
 # ---- Structured Output Schema ----
 
@@ -248,7 +251,65 @@ async def extract_text_from_image(base64_image: str) -> str:
     
     return response.choices[0].message.content
 
-async def evaluate_essay(task_type: int, prompt_text: str, essay_text: str) -> dict:
+class WritingGraphState(TypedDict, total=False):
+    task_type: int
+    prompt_text: str
+    essay_text: str
+    feedback: WritingFeedback
+
+
+def _evaluate_structured_node(state: WritingGraphState) -> WritingGraphState:
+    llm = get_llm()
+    structured_llm = llm.with_structured_output(WritingFeedback)
+    task_type = state.get("task_type", 2)
+    task_name = "Task 1 (Report/Letter)" if task_type == 1 else "Task 2 (Essay)"
+
+    user_prompt = f"""Evaluate the following IELTS {task_name}.
+
+**The Prompt:**
+{state.get("prompt_text", "")}
+
+**The Candidate's Essay:**
+{state.get("essay_text", "")}
+
+Provide your detailed scoring and feedback.
+"""
+
+    messages = [
+        SystemMessage(content=WRITING_EVALUATOR_SYSTEM),
+        HumanMessage(content=user_prompt),
+    ]
+    feedback = structured_llm.invoke(messages)
+    return {"feedback": feedback}
+
+
+@lru_cache(maxsize=1)
+def _get_writing_graph():
+    builder = StateGraph(WritingGraphState)
+    builder.add_node("evaluate_structured", _evaluate_structured_node)
+    builder.add_edge(START, "evaluate_structured")
+    builder.add_edge("evaluate_structured", END)
+    return builder.compile(checkpointer=get_langgraph_checkpointer())
+
+
+async def _evaluate_essay_langgraph(task_type: int, prompt_text: str, essay_text: str) -> dict:
+    graph = _get_writing_graph()
+    thread_id = f"writing-{uuid.uuid4().hex}"
+    result = await graph.ainvoke(
+        {
+            "task_type": task_type,
+            "prompt_text": prompt_text,
+            "essay_text": essay_text,
+        },
+        config={"configurable": {"thread_id": thread_id}},
+    )
+    feedback = result.get("feedback")
+    if not isinstance(feedback, WritingFeedback):
+        raise ValueError("LangGraph writing evaluation returned invalid payload")
+    return feedback.model_dump()
+
+
+async def _evaluate_essay_legacy(task_type: int, prompt_text: str, essay_text: str) -> dict:
     """
     Evaluates an IELTS essay using Groq strictly returning structured JSON.
     
@@ -260,7 +321,6 @@ async def evaluate_essay(task_type: int, prompt_text: str, essay_text: str) -> d
     Returns:
         Dict matching WritingFeedback schema
     """
-    # Create the structured LLM caller
     llm = get_llm()
     structured_llm = llm.with_structured_output(WritingFeedback)
     
@@ -282,7 +342,21 @@ Provide your detailed scoring and feedback.
         HumanMessage(content=user_prompt)
     ]
     
-    # Generate the structured response
     feedback: WritingFeedback = structured_llm.invoke(messages)
-    
     return feedback.model_dump()
+
+
+async def evaluate_essay(
+    task_type: int,
+    prompt_text: str,
+    essay_text: str,
+    use_langgraph: bool = True,
+) -> dict:
+    """Evaluates an IELTS essay with LangGraph primary path and legacy fallback."""
+    feature_enabled = os.getenv("ENABLE_LANGGRAPH_WRITING", "true").lower() == "true"
+    if use_langgraph and feature_enabled:
+        try:
+            return await _evaluate_essay_langgraph(task_type, prompt_text, essay_text)
+        except Exception:
+            return await _evaluate_essay_legacy(task_type, prompt_text, essay_text)
+    return await _evaluate_essay_legacy(task_type, prompt_text, essay_text)

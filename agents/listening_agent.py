@@ -4,12 +4,16 @@ Generates a multi-speaker conversation script and comprehension questions using 
 Uses Edge TTS to convert the script into alternating voice audio files.
 """
 
-import json
-from typing import List, Optional
+import os
+import uuid
+from functools import lru_cache
+from typing import List, Optional, TypedDict
 from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage
+from langgraph.graph import StateGraph, START, END
 from utils.llm import get_llm
 from utils.tts import synthesize_speech
+from utils.langgraph_runtime import get_langgraph_checkpointer
 
 # ---- Structured Output Schemas ----
 
@@ -56,29 +60,17 @@ async def generate_listening_test(
     topic: str = "A student inquiring about a gym membership",
     session_seed: str | None = None,
     recent_scenarios: Optional[list[str]] = None,
+    use_langgraph: bool = True,
 ) -> dict:
     """
     Generates the test script and synthesizes the audio files.
     """
-    llm = get_llm()
-    structured_llm = llm.with_structured_output(ListeningTestGeneration)
-    
-    messages = [
-        SystemMessage(content=LISTENING_GENERATOR_SYSTEM),
-        HumanMessage(
-            content=(
-                f"Create an IELTS Listening test about: {topic}\n\n"
-                f"Uniqueness seed: {session_seed or 'default-seed'}\n"
-                "Make the situation, names, places, numbers, and events different from common templates.\n"
-                "Do not repeat any of these recent scenarios:\n"
-                f"{_format_recent_scenarios(recent_scenarios)}\n\n"
-                "Ensure at least one specific date/time and one corrected detail (IELTS-style distractor)."
-            )
-        ),
-    ]
-    
-    # 1. Generate the script and questions
-    test_data: ListeningTestGeneration = structured_llm.invoke(messages)
+    test_data = await _generate_test_data(
+        topic=topic,
+        session_seed=session_seed,
+        recent_scenarios=recent_scenarios,
+        use_langgraph=use_langgraph,
+    )
     
     # Identify unique speakers (expecting exactly 2)
     speakers = list(dict.fromkeys([line.speaker for line in test_data.dialogue]))
@@ -110,3 +102,95 @@ async def generate_listening_test(
         "dialogue": dialogue_with_audio,
         "questions": [q.model_dump() for q in test_data.questions]
     }
+
+
+class ListeningGraphState(TypedDict, total=False):
+    topic: str
+    session_seed: str
+    recent_scenarios: list[str]
+    generated: ListeningTestGeneration
+
+
+def _build_generation_messages(topic: str, session_seed: str, recent_scenarios: Optional[list[str]]):
+    return [
+        SystemMessage(content=LISTENING_GENERATOR_SYSTEM),
+        HumanMessage(
+            content=(
+                f"Create an IELTS Listening test about: {topic}\n\n"
+                f"Uniqueness seed: {session_seed or 'default-seed'}\n"
+                "Make the situation, names, places, numbers, and events different from common templates.\n"
+                "Do not repeat any of these recent scenarios:\n"
+                f"{_format_recent_scenarios(recent_scenarios)}\n\n"
+                "Ensure at least one specific date/time and one corrected detail (IELTS-style distractor)."
+            )
+        ),
+    ]
+
+
+def _generate_structured_node(state: ListeningGraphState) -> ListeningGraphState:
+    llm = get_llm()
+    structured_llm = llm.with_structured_output(ListeningTestGeneration)
+    messages = _build_generation_messages(
+        topic=state.get("topic", "A student inquiring about a gym membership"),
+        session_seed=state.get("session_seed", "default-seed"),
+        recent_scenarios=state.get("recent_scenarios", []),
+    )
+    generated = structured_llm.invoke(messages)
+    return {"generated": generated}
+
+
+@lru_cache(maxsize=1)
+def _get_listening_graph():
+    builder = StateGraph(ListeningGraphState)
+    builder.add_node("generate_structured", _generate_structured_node)
+    builder.add_edge(START, "generate_structured")
+    builder.add_edge("generate_structured", END)
+    return builder.compile(checkpointer=get_langgraph_checkpointer())
+
+
+async def _generate_test_data_langgraph(
+    topic: str,
+    session_seed: str,
+    recent_scenarios: Optional[list[str]],
+) -> ListeningTestGeneration:
+    graph = _get_listening_graph()
+    thread_id = f"listening-{session_seed or uuid.uuid4().hex}"
+    result = await graph.ainvoke(
+        {
+            "topic": topic,
+            "session_seed": session_seed,
+            "recent_scenarios": recent_scenarios or [],
+        },
+        config={"configurable": {"thread_id": thread_id}},
+    )
+    generated = result.get("generated")
+    if not isinstance(generated, ListeningTestGeneration):
+        raise ValueError("LangGraph listening generation returned invalid payload")
+    return generated
+
+
+async def _generate_test_data_legacy(
+    topic: str,
+    session_seed: str,
+    recent_scenarios: Optional[list[str]],
+) -> ListeningTestGeneration:
+    llm = get_llm()
+    structured_llm = llm.with_structured_output(ListeningTestGeneration)
+    messages = _build_generation_messages(topic, session_seed, recent_scenarios)
+    return structured_llm.invoke(messages)
+
+
+async def _generate_test_data(
+    topic: str,
+    session_seed: str | None,
+    recent_scenarios: Optional[list[str]],
+    use_langgraph: bool,
+) -> ListeningTestGeneration:
+    seed = session_seed or uuid.uuid4().hex
+    feature_enabled = os.getenv("ENABLE_LANGGRAPH_LISTENING", "true").lower() == "true"
+    if use_langgraph and feature_enabled:
+        try:
+            return await _generate_test_data_langgraph(topic, seed, recent_scenarios)
+        except Exception:
+            return await _generate_test_data_legacy(topic, seed, recent_scenarios)
+    return await _generate_test_data_legacy(topic, seed, recent_scenarios)
