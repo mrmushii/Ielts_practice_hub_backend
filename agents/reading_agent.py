@@ -9,9 +9,12 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, TypedDict
 from pymongo import MongoClient
 from utils.llm import get_llm
+from utils.langgraph_runtime import get_langgraph_checkpointer
+from langgraph.graph import StateGraph, START, END
+from functools import lru_cache
 import os
 import uuid
 
@@ -74,22 +77,122 @@ One must be 'fill_blank' (Fill in the blanks).
 Output strictly matching the requested JSON schema.
 """
 
-async def generate_reading_test() -> dict:
-    """Generates a dynamic IELTS reading passage with questions."""
+class ReadingGenerationState(TypedDict, total=False):
+    generated: GeneratedPassage
+
+
+class ReadingEvaluationState(TypedDict, total=False):
+    passage_id: str
+    passage_text: str
+    question: str
+    user_answer: str
+    context: str
+    response_text: str
+    is_correct: bool
+
+
+def _generate_passage_node(_: ReadingGenerationState) -> ReadingGenerationState:
     llm = get_llm()
     structured_llm = llm.with_structured_output(GeneratedPassage)
-    
+
     prompt = ChatPromptTemplate.from_messages([
         ("system", READING_GENERATOR_PROMPT),
-        ("user", "Generate a new IELTS reading passage and 3 questions now.")
+        ("user", "Generate a new IELTS reading passage and 3 questions now."),
     ])
-    
+
     chain = prompt | structured_llm
     result: GeneratedPassage = chain.invoke({})
-    
-    # Ensure ID is truly unique for MongoDB
     result.id = f"passage_{uuid.uuid4().hex[:8]}"
-    return result.model_dump()
+    return {"generated": result}
+
+
+def _retrieve_context_node(state: ReadingEvaluationState) -> ReadingEvaluationState:
+    passage_id = state.get("passage_id", "")
+    passage_text = state.get("passage_text", "")
+    question = state.get("question", "")
+
+    load_passage_into_vector_manager(passage_id, passage_text)
+    collection = get_vector_collection()
+    vectorstore = MongoDBAtlasVectorSearch(
+        collection=collection,
+        embedding=embeddings,
+        index_name="vector_index"
+    )
+
+    retriever = vectorstore.as_retriever(
+        search_kwargs={
+            "k": 2,
+            "pre_filter": {"passage_id": {"$eq": passage_id}},
+        }
+    )
+    docs = retriever.invoke(question)
+    context = "\n\n".join([doc.page_content for doc in docs])
+    return {"context": context}
+
+
+def _evaluate_context_node(state: ReadingEvaluationState) -> ReadingEvaluationState:
+    prompt = ChatPromptTemplate.from_template(READING_EVALUATOR_PROMPT)
+    llm = get_llm()
+    chain = prompt | llm | StrOutputParser()
+
+    response_text = chain.invoke(
+        {
+            "context": state.get("context", ""),
+            "question": state.get("question", ""),
+            "user_answer": state.get("user_answer", ""),
+        }
+    )
+    is_correct = response_text.strip().upper().startswith("CORRECT")
+    return {"response_text": response_text, "is_correct": is_correct}
+
+
+@lru_cache(maxsize=1)
+def _get_reading_generation_graph():
+    builder = StateGraph(ReadingGenerationState)
+    builder.add_node("generate_passage", _generate_passage_node)
+    builder.add_edge(START, "generate_passage")
+    builder.add_edge("generate_passage", END)
+    return builder.compile(checkpointer=get_langgraph_checkpointer())
+
+
+@lru_cache(maxsize=1)
+def _get_reading_evaluation_graph():
+    builder = StateGraph(ReadingEvaluationState)
+    builder.add_node("retrieve_context", _retrieve_context_node)
+    builder.add_node("evaluate_context", _evaluate_context_node)
+    builder.add_edge(START, "retrieve_context")
+    builder.add_edge("retrieve_context", "evaluate_context")
+    builder.add_edge("evaluate_context", END)
+    return builder.compile(checkpointer=get_langgraph_checkpointer())
+
+
+async def _generate_reading_test_legacy() -> dict:
+    state = _generate_passage_node({})
+    generated = state["generated"]
+    return generated.model_dump()
+
+
+async def _generate_reading_test_langgraph() -> dict:
+    graph = _get_reading_generation_graph()
+    result = await graph.ainvoke(
+        {},
+        config={"configurable": {"thread_id": f"reading-generate-{uuid.uuid4().hex}"}},
+    )
+    generated = result.get("generated")
+    if not isinstance(generated, GeneratedPassage):
+        raise ValueError("LangGraph reading generation returned invalid payload")
+    return generated.model_dump()
+
+
+async def generate_reading_test(use_langgraph: bool = True) -> dict:
+    """Generates a dynamic IELTS reading passage with questions."""
+    feature_enabled = os.getenv("ENABLE_LANGGRAPH_READING", "true").lower() == "true"
+    if use_langgraph and feature_enabled:
+        try:
+            return await _generate_reading_test_langgraph()
+        except Exception:
+            return await _generate_reading_test_legacy()
+    return await _generate_reading_test_legacy()
 
 
 def load_passage_into_vector_manager(passage_id: str, text: str):
@@ -123,49 +226,53 @@ def load_passage_into_vector_manager(passage_id: str, text: str):
     )
 
 
-async def evaluate_reading_answer(passage_id: str, passage_text: str, question: str, user_answer: str) -> dict:
-    """
-    Retrieves the most relevant chunks from the passage and uses the LLM to verify the user's answer.
-    """
-    # Ensure it's in the vector store
-    load_passage_into_vector_manager(passage_id, passage_text)
-
-    # Initialize the vector store connection
-    collection = get_vector_collection()
-    vectorstore = MongoDBAtlasVectorSearch(
-        collection=collection,
-        embedding=embeddings,
-        index_name="vector_index"
-    )
-
-    # Retrieve top 2 most relevant chunks for this specific passage
-    retriever = vectorstore.as_retriever(
-        search_kwargs={
-            "k": 2, 
-            "pre_filter": {"passage_id": {"$eq": passage_id}}
-        }
-    )
-    docs = retriever.invoke(question)
-    
-    # Combine chunks into single context string
-    context = "\n\n".join([doc.page_content for doc in docs])
-
-    # Build the prompt and call LLM
-    prompt = ChatPromptTemplate.from_template(READING_EVALUATOR_PROMPT)
-    llm = get_llm()
-    chain = prompt | llm | StrOutputParser()
-
-    response_text = chain.invoke({
-        "context": context,
+async def _evaluate_reading_answer_legacy(passage_id: str, passage_text: str, question: str, user_answer: str) -> dict:
+    state: ReadingEvaluationState = {
+        "passage_id": passage_id,
+        "passage_text": passage_text,
         "question": question,
-        "user_answer": user_answer
-    })
-
-    # Parse response format: "CORRECT/INCORRECT. [Explanation]"
-    is_correct = response_text.strip().upper().startswith("CORRECT")
-    
-    return {
-        "is_correct": is_correct,
-        "feedback": response_text,
-        "retrieved_context": context
+        "user_answer": user_answer,
     }
+    state.update(_retrieve_context_node(state))
+    state.update(_evaluate_context_node(state))
+
+    return {
+        "is_correct": bool(state.get("is_correct", False)),
+        "feedback": state.get("response_text", ""),
+        "retrieved_context": state.get("context", ""),
+    }
+
+
+async def _evaluate_reading_answer_langgraph(passage_id: str, passage_text: str, question: str, user_answer: str) -> dict:
+    graph = _get_reading_evaluation_graph()
+    result = await graph.ainvoke(
+        {
+            "passage_id": passage_id,
+            "passage_text": passage_text,
+            "question": question,
+            "user_answer": user_answer,
+        },
+        config={"configurable": {"thread_id": f"reading-eval-{passage_id}-{uuid.uuid4().hex[:6]}"}},
+    )
+    return {
+        "is_correct": bool(result.get("is_correct", False)),
+        "feedback": result.get("response_text", ""),
+        "retrieved_context": result.get("context", ""),
+    }
+
+
+async def evaluate_reading_answer(
+    passage_id: str,
+    passage_text: str,
+    question: str,
+    user_answer: str,
+    use_langgraph: bool = True,
+) -> dict:
+    """Retrieves relevant chunks and evaluates answer with LangGraph primary path and fallback."""
+    feature_enabled = os.getenv("ENABLE_LANGGRAPH_READING", "true").lower() == "true"
+    if use_langgraph and feature_enabled:
+        try:
+            return await _evaluate_reading_answer_langgraph(passage_id, passage_text, question, user_answer)
+        except Exception:
+            return await _evaluate_reading_answer_legacy(passage_id, passage_text, question, user_answer)
+    return await _evaluate_reading_answer_legacy(passage_id, passage_text, question, user_answer)

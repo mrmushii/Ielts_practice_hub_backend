@@ -2,7 +2,7 @@
 Reading test API routes and sample passages.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
 from typing import List
 from agents.reading_agent import evaluate_reading_answer, generate_reading_test
@@ -27,6 +27,7 @@ class AskRequest(BaseModel):
     passage_text: str
     question: str
     user_answer: str
+    use_langgraph: bool = True
 
 class AskResponse(BaseModel):
     is_correct: bool
@@ -76,9 +77,9 @@ SAMPLE_PASSAGES = [
 # ---- Endpoints ----
 
 @router.get("/generate", response_model=Passage)
-async def generate_passage():
+async def generate_passage(use_langgraph: bool = Query(default=True)):
     """Dynamically generates a new IELTS reading passage with 3 varied questions."""
-    return await generate_reading_test()
+    return await generate_reading_test(use_langgraph=use_langgraph)
 
 @router.get("/passages", response_model=List[Passage])
 async def get_passages():
@@ -92,6 +93,7 @@ async def ask_question(req: AskRequest):
         passage_id=req.passage_id,
         passage_text=req.passage_text,
         question=req.question,
-        user_answer=req.user_answer
+        user_answer=req.user_answer,
+        use_langgraph=req.use_langgraph,
     )
     return AskResponse(**result)
