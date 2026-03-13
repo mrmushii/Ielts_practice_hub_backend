@@ -4,6 +4,10 @@ Omni-Tutor Agent equipped with Search, Grounding, and RAG tools.
 
 import os
 import uuid
+import json
+from urllib.parse import urlencode
+from urllib.request import urlopen, Request
+from urllib.error import URLError, HTTPError
 from functools import lru_cache
 
 from langchain_community.tools import DuckDuckGoSearchRun
@@ -16,12 +20,61 @@ from langgraph.prebuilt import create_react_agent
 from utils.llm import get_llm
 from utils.langgraph_runtime import get_langgraph_checkpointer
 
+
+_fallback_search = DuckDuckGoSearchRun()
+
+
+def _google_custom_search(query: str, site_restrict: str | None = None, num_results: int = 5) -> str:
+    api_key = os.getenv("GOOGLE_SEARCH_API_KEY", "").strip()
+    engine_id = os.getenv("GOOGLE_SEARCH_ENGINE_ID", "").strip()
+
+    search_query = query.strip()
+    if site_restrict:
+        search_query = f"site:{site_restrict} {search_query}"
+
+    if not api_key or not engine_id:
+        fallback = _fallback_search.run(search_query)
+        return "Google API keys are not configured. Fallback search result:\n\n" + fallback
+
+    params = {
+        "key": api_key,
+        "cx": engine_id,
+        "q": search_query,
+        "num": max(1, min(num_results, 10)),
+    }
+    url = "https://www.googleapis.com/customsearch/v1?" + urlencode(params)
+
+    try:
+        req = Request(url, headers={"User-Agent": "ielts-platform-tutor/1.0"})
+        with urlopen(req, timeout=12) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError) as err:
+        fallback = _fallback_search.run(search_query)
+        return f"Google Search failed ({err}). Fallback search result:\n\n{fallback}"
+
+    items = data.get("items", [])
+    if not items:
+        return "No relevant results found from Google Search."
+
+    lines = []
+    for idx, item in enumerate(items, start=1):
+        title = item.get("title", "Untitled")
+        link = item.get("link", "")
+        snippet = item.get("snippet", "")
+        lines.append(f"{idx}. {title}\nURL: {link}\nSnippet: {snippet}")
+
+    return "\n\n".join(lines)
+
 @tool
 def google_search_grounding(query: str) -> str:
     """Use this tool to ground answers using official IELTS facts or rules. 
-    It simulates a Google Search for authoritative IELTS information."""
-    search = DuckDuckGoSearchRun()
-    return search.run(f"site:ielts.org OR site:britishcouncil.org {query}")
+    Uses real Google Search (Custom Search API) for authoritative IELTS information."""
+    if not query or not query.strip():
+        return "Error: query cannot be empty."
+
+    ielts_org = _google_custom_search(query=query, site_restrict="ielts.org", num_results=4)
+    british_council = _google_custom_search(query=query, site_restrict="britishcouncil.org", num_results=4)
+    return f"Official grounding results from IELTS.org:\n\n{ielts_org}\n\nOfficial grounding results from British Council:\n\n{british_council}"
 
 @tool
 def search_uploaded_documents(query: str) -> str:
@@ -57,19 +110,21 @@ def search_uploaded_documents(query: str) -> str:
     content = "\n\n".join([doc.page_content for doc in docs])
     return f"Retrieved from documents:\n\n{content}"
 
-search_tool = DuckDuckGoSearchRun(
-    name="internet_search", 
-    description="Use this tool to search the internet for general queries or recent topics."
-)
+@tool
+def internet_search(query: str) -> str:
+    """Use this tool for real-time internet search on general queries and current topics."""
+    if not query or not query.strip():
+        return "Error: query cannot be empty."
+    return _google_custom_search(query=query, site_restrict=None, num_results=6)
 
-tools = [search_tool, google_search_grounding, search_uploaded_documents]
+tools = [internet_search, google_search_grounding, search_uploaded_documents]
 
 
 def _build_system_prompt(essay_context: str | None = None) -> str:
     system_text = (
         "You are an expert IELTS Omni-Tutor. You MUST use your tools to provide accurate info. "
         "User can upload PDF documents; ALWAYS check 'search_uploaded_documents' if the user mentions a file or asks a complex question about IELTS rules/materials. "
-        "Use 'google_search_grounding' for official website-only rules, and 'internet_search' for general news/topics. "
+        "Use 'google_search_grounding' for official website-only rules, and 'internet_search' for real-time Google Search on general news/topics. "
         "Respond in a professional tutoring style with clear structure. "
         "Prefer short sections, concise bullet points, and direct actionable advice. "
         "Avoid vague or generic responses. "
