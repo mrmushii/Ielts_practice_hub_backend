@@ -43,6 +43,15 @@ class FeedbackResponse(BaseModel):
     feedback: str
 
 
+class TranscriptMessage(BaseModel):
+    role: str
+    content: str
+
+
+class TranscriptFeedbackRequest(BaseModel):
+    transcript: list[TranscriptMessage]
+
+
 # ---- Start a new speaking test ----
 
 @router.post("/start", response_model=StartSessionResponse)
@@ -215,6 +224,24 @@ async def get_feedback(session_id: str = Form(...), db=Depends(get_db)):
     session.feedback = feedback
     await db.speaking_sessions.replace_one({"session_id": session.session_id}, session.model_dump())
     
+    return FeedbackResponse(feedback=feedback)
+
+
+@router.post("/feedback-from-transcript", response_model=FeedbackResponse)
+async def get_feedback_from_transcript(req: TranscriptFeedbackRequest):
+    """Generates IELTS speaking feedback from a realtime transcript payload."""
+    if not req.transcript:
+        raise HTTPException(status_code=400, detail="Transcript is empty.")
+
+    history_dicts = [
+        {"role": msg.role, "content": msg.content}
+        for msg in req.transcript
+        if msg.content.strip()
+    ]
+    if not history_dicts:
+        raise HTTPException(status_code=400, detail="Transcript is empty.")
+
+    feedback = await generate_feedback(history_dicts)
     return FeedbackResponse(feedback=feedback)
 
 
