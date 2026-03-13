@@ -16,6 +16,13 @@ import os
 router = APIRouter(prefix="/api", tags=["core"])
 
 
+def _env_flag(name: str, default: bool = True) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 # ---- Schemas ----
 
 class ChatRequest(BaseModel):
@@ -91,6 +98,32 @@ async def text_to_speech(req: TTSRequest):
 async def list_voices():
     """Lists available TTS voices."""
     return {"voices": list(VOICES.keys())}
+
+
+@router.get("/langgraph-status")
+async def langgraph_status():
+    """Reports LangGraph rollout and runtime configuration status."""
+    checkpoint_mode = os.getenv("LANGGRAPH_CHECKPOINTER", "memory").strip().lower() or "memory"
+
+    module_flags = {
+        "tutor": _env_flag("ENABLE_LANGGRAPH_TUTOR", True),
+        "speaking": _env_flag("ENABLE_LANGGRAPH_SPEAKING", True),
+        "listening": _env_flag("ENABLE_LANGGRAPH_LISTENING", True),
+        "writing": _env_flag("ENABLE_LANGGRAPH_WRITING", True),
+        "reading": _env_flag("ENABLE_LANGGRAPH_READING", True),
+    }
+
+    return {
+        "langgraph": {
+            "enabled_modules": module_flags,
+            "checkpoint_mode": checkpoint_mode,
+            "mongo_checkpoint": {
+                "db": os.getenv("LANGGRAPH_MONGO_DB", "ielts_platform"),
+                "collection": os.getenv("LANGGRAPH_MONGO_COLLECTION", "langgraph_checkpoints"),
+                "configured": bool(os.getenv("MONGODB_URI")),
+            },
+        }
+    }
 
 
 # ---- Serve Audio Files ----
