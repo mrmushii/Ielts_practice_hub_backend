@@ -5,6 +5,7 @@ Omni-Tutor Agent equipped with Search, Grounding, and RAG tools.
 import os
 import uuid
 import json
+from datetime import datetime
 from urllib.parse import urlencode
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
@@ -24,15 +25,30 @@ from utils.langgraph_runtime import get_langgraph_checkpointer
 _fallback_search = DuckDuckGoSearchRun()
 
 
+@tool
+def current_datetime() -> str:
+    """Use this tool for current date, current year, time, day, month, timezone-independent UTC timestamp questions."""
+    now = datetime.utcnow()
+    return (
+        f"UTC date: {now.strftime('%Y-%m-%d')}\n"
+        f"UTC year: {now.strftime('%Y')}\n"
+        f"UTC time: {now.strftime('%H:%M:%S')}\n"
+        f"UTC weekday: {now.strftime('%A')}"
+    )
+
+
 def _google_custom_search(query: str, site_restrict: str | None = None, num_results: int = 5) -> str:
     api_key = os.getenv("GOOGLE_SEARCH_API_KEY", "").strip()
     engine_id = os.getenv("GOOGLE_SEARCH_ENGINE_ID", "").strip()
+    strict_mode = os.getenv("GOOGLE_SEARCH_STRICT", "true").strip().lower() in {"1", "true", "yes", "on"}
 
     search_query = query.strip()
     if site_restrict:
         search_query = f"site:{site_restrict} {search_query}"
 
     if not api_key or not engine_id:
+        if strict_mode:
+            return "GOOGLE_SEARCH_ERROR: Missing GOOGLE_SEARCH_API_KEY or GOOGLE_SEARCH_ENGINE_ID."
         fallback = _fallback_search.run(search_query)
         return "Google API keys are not configured. Fallback search result:\n\n" + fallback
 
@@ -48,7 +64,24 @@ def _google_custom_search(query: str, site_restrict: str | None = None, num_resu
         req = Request(url, headers={"User-Agent": "ielts-platform-tutor/1.0"})
         with urlopen(req, timeout=12) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-    except (HTTPError, URLError, TimeoutError) as err:
+    except HTTPError as err:
+        error_body = ""
+        try:
+            error_body = err.read().decode("utf-8")
+        except Exception:
+            error_body = ""
+
+        if "API_KEY_INVALID" in error_body or "API key not valid" in error_body:
+            return "GOOGLE_SEARCH_ERROR: API_KEY_INVALID. Use a valid Google API key (starts with AIza...)."
+
+        if strict_mode:
+            return f"GOOGLE_SEARCH_ERROR: Google API request failed ({err.code})."
+
+        fallback = _fallback_search.run(search_query)
+        return f"Google Search failed ({err}). Fallback search result:\n\n{fallback}"
+    except (URLError, TimeoutError) as err:
+        if strict_mode:
+            return f"GOOGLE_SEARCH_ERROR: Network failure ({err})."
         fallback = _fallback_search.run(search_query)
         return f"Google Search failed ({err}). Fallback search result:\n\n{fallback}"
 
@@ -117,7 +150,7 @@ def internet_search(query: str) -> str:
         return "Error: query cannot be empty."
     return _google_custom_search(query=query, site_restrict=None, num_results=6)
 
-tools = [internet_search, google_search_grounding, search_uploaded_documents]
+tools = [current_datetime, internet_search, google_search_grounding, search_uploaded_documents]
 
 
 def _build_system_prompt(essay_context: str | None = None) -> str:
@@ -125,6 +158,7 @@ def _build_system_prompt(essay_context: str | None = None) -> str:
         "You are an expert IELTS Omni-Tutor. You MUST use your tools to provide accurate info. "
         "User can upload PDF documents; ALWAYS check 'search_uploaded_documents' if the user mentions a file or asks a complex question about IELTS rules/materials. "
         "Use 'google_search_grounding' for official website-only rules, and 'internet_search' for real-time Google Search on general news/topics. "
+        "For any question about current date/year/time, you MUST call 'current_datetime' tool first. "
         "Respond in a professional tutoring style with clear structure. "
         "Prefer short sections, concise bullet points, and direct actionable advice. "
         "Avoid vague or generic responses. "
