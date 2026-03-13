@@ -37,6 +37,7 @@ class RespondResponse(BaseModel):
     audio_url: str
     part: int
     is_complete: bool
+    candidate_text: str | None = None
 
 
 class FeedbackResponse(BaseModel):
@@ -112,6 +113,7 @@ async def respond_text(req: RespondRequest, db=Depends(get_db)):
             audio_url="",
             part=3,
             is_complete=True,
+            candidate_text=None,
         )
 
     # Add candidate's response to history
@@ -139,6 +141,7 @@ async def respond_text(req: RespondRequest, db=Depends(get_db)):
             audio_url="",
             part=3,
             is_complete=True,
+            candidate_text=None,
         )
 
     # Convert history format for agent
@@ -170,6 +173,7 @@ async def respond_text(req: RespondRequest, db=Depends(get_db)):
         audio_url=f"/api/speaking/audio/{os.path.basename(audio_path)}",
         part=session.part,
         is_complete=is_complete,
+        candidate_text=None,
     )
 
 
@@ -198,7 +202,9 @@ async def respond_audio(
 
     # Process as text response
     req = RespondRequest(session_id=session_id, candidate_text=candidate_text)
-    return await respond_text(req, db)
+    response = await respond_text(req, db)
+    response.candidate_text = candidate_text
+    return response
 
 
 # ---- Get feedback ----
