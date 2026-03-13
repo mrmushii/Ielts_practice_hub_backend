@@ -132,6 +132,7 @@ async def start_session(
         context_memory=profile_bits,
         examiner_name=examiner_name,
         opener_style=opener_style,
+        session_id=session_id,
     )
 
     # Save to history
@@ -233,6 +234,7 @@ async def respond_text(req: RespondRequest, db=Depends(get_db)):
         context_memory=session.context_memory,
         examiner_name=session.examiner_name,
         opener_style=session.opener_style,
+        session_id=session.session_id,
     )
 
     session.history.append(ChatMessage(role="examiner", content=examiner_text))

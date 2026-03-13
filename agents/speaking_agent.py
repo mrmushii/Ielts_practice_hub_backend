@@ -4,8 +4,15 @@ Simulates a real IELTS speaking test with Parts 1, 2, and 3.
 Maintains conversation state and provides examiner-style follow-ups.
 """
 
+import os
+import uuid
+from functools import lru_cache
+
+from langchain_core.messages import BaseMessage
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langgraph.prebuilt import create_react_agent
 from utils.llm import get_llm
+from utils.langgraph_runtime import get_langgraph_checkpointer
 
 # ---- System Prompts for each Part ----
 
@@ -165,7 +172,13 @@ def build_messages(
     return messages
 
 
-async def examiner_respond(
+@lru_cache(maxsize=1)
+def _get_speaking_graph():
+    llm = get_llm()
+    return create_react_agent(model=llm, tools=[], checkpointer=get_langgraph_checkpointer())
+
+
+async def _examiner_respond_legacy(
     part: int,
     topic_seed: str,
     history: list[dict],
@@ -175,17 +188,7 @@ async def examiner_respond(
     examiner_name: str = "Sarah",
     opener_style: str = "warm",
 ) -> str:
-    """
-    Generates the examiner's next response based on conversation history.
-
-    Args:
-        part: IELTS speaking part (1, 2, or 3)
-        topic_seed: Random string theme to anchor Parts 2 and 3
-        history: List of {"role": "examiner"|"candidate", "content": "..."}
-
-    Returns:
-        The examiner's response text.
-    """
+    """Legacy speaking response path retained as fallback."""
     llm = get_llm()
     if candidate_name:
         profile_lines = candidate_profile or []
@@ -204,6 +207,111 @@ async def examiner_respond(
     )
     response = llm.invoke(messages)
     return response.content
+
+
+async def _examiner_respond_langgraph(
+    part: int,
+    topic_seed: str,
+    history: list[dict],
+    candidate_name: str | None = None,
+    candidate_profile: list[str] | None = None,
+    context_memory: list[str] | None = None,
+    examiner_name: str = "Sarah",
+    opener_style: str = "warm",
+    session_id: str | None = None,
+) -> str:
+    """LangGraph speaking response path."""
+    if candidate_name:
+        profile_lines = candidate_profile or []
+        if not any("Preferred name:" in line for line in profile_lines):
+            profile_lines = [f"Preferred name: {candidate_name}", *profile_lines]
+        candidate_profile = profile_lines
+
+    graph = _get_speaking_graph()
+    thread_seed = (session_id or "").strip() or f"speaking-{uuid.uuid4().hex}"
+    thread_id = f"{thread_seed}-p{part}-t{len(history)}"
+
+    messages: list[BaseMessage] = build_messages(
+        part,
+        topic_seed,
+        history,
+        candidate_profile,
+        context_memory,
+        examiner_name,
+        opener_style,
+    )
+
+    result = await graph.ainvoke(
+        {"messages": messages},
+        config={"configurable": {"thread_id": thread_id}},
+    )
+
+    output_messages = result.get("messages", [])
+    for msg in reversed(output_messages):
+        content = getattr(msg, "content", "")
+        if isinstance(msg, AIMessage) and content:
+            return content
+    return "Could you please continue with your answer?"
+
+
+async def examiner_respond(
+    part: int,
+    topic_seed: str,
+    history: list[dict],
+    candidate_name: str | None = None,
+    candidate_profile: list[str] | None = None,
+    context_memory: list[str] | None = None,
+    examiner_name: str = "Sarah",
+    opener_style: str = "warm",
+    session_id: str | None = None,
+) -> str:
+    """
+    Generates the examiner's next response based on conversation history.
+
+    Args:
+        part: IELTS speaking part (1, 2, or 3)
+        topic_seed: Random string theme to anchor Parts 2 and 3
+        history: List of {"role": "examiner"|"candidate", "content": "..."}
+
+    Returns:
+        The examiner's response text.
+    """
+    feature_enabled = (os.getenv("ENABLE_LANGGRAPH_SPEAKING", "true").lower() == "true")
+    if feature_enabled:
+        try:
+            return await _examiner_respond_langgraph(
+                part=part,
+                topic_seed=topic_seed,
+                history=history,
+                candidate_name=candidate_name,
+                candidate_profile=candidate_profile,
+                context_memory=context_memory,
+                examiner_name=examiner_name,
+                opener_style=opener_style,
+                session_id=session_id,
+            )
+        except Exception:
+            return await _examiner_respond_legacy(
+                part=part,
+                topic_seed=topic_seed,
+                history=history,
+                candidate_name=candidate_name,
+                candidate_profile=candidate_profile,
+                context_memory=context_memory,
+                examiner_name=examiner_name,
+                opener_style=opener_style,
+            )
+
+    return await _examiner_respond_legacy(
+        part=part,
+        topic_seed=topic_seed,
+        history=history,
+        candidate_name=candidate_name,
+        candidate_profile=candidate_profile,
+        context_memory=context_memory,
+        examiner_name=examiner_name,
+        opener_style=opener_style,
+    )
 
 
 async def generate_feedback(history: list[dict]) -> str:

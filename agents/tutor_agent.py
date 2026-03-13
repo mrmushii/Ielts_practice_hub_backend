@@ -13,8 +13,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.messages import BaseMessage
 from langgraph.prebuilt import create_react_agent
-from langgraph.checkpoint.memory import MemorySaver
 from utils.llm import get_llm
+from utils.langgraph_runtime import get_langgraph_checkpointer
 
 @tool
 def google_search_grounding(query: str) -> str:
@@ -93,27 +93,9 @@ def _build_chat_history(history: list | None) -> list[BaseMessage]:
 
 
 @lru_cache(maxsize=1)
-def _get_checkpointer():
-    """Returns a LangGraph checkpointer. Defaults to memory with optional Mongo mode."""
-    mode = os.getenv("LANGGRAPH_CHECKPOINTER", "memory").lower().strip()
-    if mode == "mongodb":
-        try:
-            # Optional dependency path; if unavailable, fallback to memory.
-            from langgraph.checkpoint.mongodb import MongoDBSaver  # type: ignore
-
-            uri = os.getenv("MONGODB_URI") or "mongodb://localhost:27017"
-            db_name = os.getenv("LANGGRAPH_MONGO_DB", "ielts_platform")
-            collection = os.getenv("LANGGRAPH_MONGO_COLLECTION", "langgraph_checkpoints")
-            return MongoDBSaver.from_conn_string(uri, db_name=db_name, collection_name=collection)
-        except Exception:
-            return MemorySaver()
-    return MemorySaver()
-
-
-@lru_cache(maxsize=1)
 def _get_tutor_graph():
     llm = get_llm()
-    return create_react_agent(model=llm, tools=tools, checkpointer=_get_checkpointer())
+    return create_react_agent(model=llm, tools=tools, checkpointer=get_langgraph_checkpointer())
 
 
 async def _chat_with_tutor_legacy(message: str, essay_context: str = None, history: list = None) -> str:
