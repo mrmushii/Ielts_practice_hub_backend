@@ -45,7 +45,18 @@ Then, generate 3-5 comprehension questions based on the dialogue. Mix multiple-c
 IMPORTANT: Strictly output the requested JSON schema.
 """
 
-async def generate_listening_test(topic: str = "A student inquiring about a gym membership") -> dict:
+
+def _format_recent_scenarios(recent_scenarios: Optional[list[str]]) -> str:
+    if not recent_scenarios:
+        return "- None"
+    return "\n".join(f"- {item}" for item in recent_scenarios)
+
+
+async def generate_listening_test(
+    topic: str = "A student inquiring about a gym membership",
+    session_seed: str | None = None,
+    recent_scenarios: Optional[list[str]] = None,
+) -> dict:
     """
     Generates the test script and synthesizes the audio files.
     """
@@ -54,7 +65,16 @@ async def generate_listening_test(topic: str = "A student inquiring about a gym 
     
     messages = [
         SystemMessage(content=LISTENING_GENERATOR_SYSTEM),
-        HumanMessage(content=f"Create an IELTS Listening test about: {topic}")
+        HumanMessage(
+            content=(
+                f"Create an IELTS Listening test about: {topic}\n\n"
+                f"Uniqueness seed: {session_seed or 'default-seed'}\n"
+                "Make the situation, names, places, numbers, and events different from common templates.\n"
+                "Do not repeat any of these recent scenarios:\n"
+                f"{_format_recent_scenarios(recent_scenarios)}\n\n"
+                "Ensure at least one specific date/time and one corrected detail (IELTS-style distractor)."
+            )
+        ),
     ]
     
     # 1. Generate the script and questions

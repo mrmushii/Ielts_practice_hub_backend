@@ -16,7 +16,12 @@ class SpeakingSession(BaseModel):
     part: int = 1
     voice: str = "british_female"
     topic_seed: str = "general"
-    history: List[ChatMessage] = []
+    history: List[ChatMessage] = Field(default_factory=list)
+    candidate_name: Optional[str] = None
+    candidate_profile: List[str] = Field(default_factory=list)
+    context_memory: List[str] = Field(default_factory=list)
+    examiner_name: str = "Sarah"
+    opener_style: str = "warm"
     feedback: Optional[str] = None
     is_complete: bool = False
     created_at: datetime = Field(default_factory=datetime.utcnow)

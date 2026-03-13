@@ -18,6 +18,48 @@ import random
 
 router = APIRouter(prefix="/api/speaking", tags=["speaking"])
 
+EXAMINER_NAMES = ["Sarah", "Emma", "Daniel", "Oliver", "Hannah", "James"]
+OPENING_STYLES = ["warm", "energetic", "formal", "friendly"]
+
+
+def _normalize_profile_bits(bits: list[str]) -> list[str]:
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for item in bits:
+        cleaned = item.strip()
+        if not cleaned:
+            continue
+        lowered = cleaned.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        normalized.append(cleaned)
+    return normalized[:8]
+
+
+def _extract_candidate_memory(text: str) -> list[str]:
+    lowered = text.lower().strip()
+    memories: list[str] = []
+
+    if "i am " in lowered:
+        start = lowered.find("i am ")
+        phrase = text[start : start + 90].strip()
+        memories.append(f"Candidate said: {phrase}")
+    if "i'm " in lowered:
+        start = lowered.find("i'm ")
+        phrase = text[start : start + 90].strip()
+        memories.append(f"Candidate said: {phrase}")
+    if "i study" in lowered or "student" in lowered:
+        memories.append("Candidate mentioned studies/education.")
+    if "i work" in lowered or "job" in lowered:
+        memories.append("Candidate mentioned work/job context.")
+    if "my hometown" in lowered or "i live in" in lowered:
+        memories.append("Candidate shared hometown or current city.")
+    if "i like" in lowered or "my hobby" in lowered or "in my free time" in lowered:
+        memories.append("Candidate mentioned hobbies or interests.")
+
+    return _normalize_profile_bits(memories)[:3]
+
 # ---- Schemas ----
 
 class StartSessionResponse(BaseModel):
@@ -56,7 +98,14 @@ class TranscriptFeedbackRequest(BaseModel):
 # ---- Start a new speaking test ----
 
 @router.post("/start", response_model=StartSessionResponse)
-async def start_session(voice: str = "british_female", db=Depends(get_db)):
+async def start_session(
+    voice: str = Form("british_female"),
+    candidate_name: str | None = Form(None),
+    candidate_background: str | None = Form(None),
+    candidate_hometown: str | None = Form(None),
+    candidate_interests: str | None = Form(None),
+    db=Depends(get_db),
+):
     """Starts a new IELTS speaking test session. Examiner introduces and asks the first question."""
     session_id = uuid.uuid4().hex
 
@@ -64,8 +113,26 @@ async def start_session(voice: str = "british_female", db=Depends(get_db)):
     topics = ["Technology and AI", "Environmental Protection", "Childhood Memories", "Modern Transportation", "Global Tourism", "Arts and Culture", "Space Exploration", "Social Media", "Historical Events", "Healthy Lifestyle"]
     topic_seed = random.choice(topics)
 
+    examiner_name = random.choice(EXAMINER_NAMES)
+    opener_style = random.choice(OPENING_STYLES)
+    profile_bits = _normalize_profile_bits([
+        f"Preferred name: {candidate_name}" if candidate_name else "",
+        f"Background: {candidate_background}" if candidate_background else "",
+        f"Hometown: {candidate_hometown}" if candidate_hometown else "",
+        f"Interests: {candidate_interests}" if candidate_interests else "",
+    ])
+
     # Get examiner's opening (Part 1 intro + first question)
-    examiner_text = await examiner_respond(part=1, topic_seed=topic_seed, history=[])
+    examiner_text = await examiner_respond(
+        part=1,
+        topic_seed=topic_seed,
+        history=[],
+        candidate_name=candidate_name,
+        candidate_profile=profile_bits,
+        context_memory=profile_bits,
+        examiner_name=examiner_name,
+        opener_style=opener_style,
+    )
 
     # Save to history
     history = [ChatMessage(role="examiner", content=examiner_text)]
@@ -80,7 +147,12 @@ async def start_session(voice: str = "british_female", db=Depends(get_db)):
         part=1,
         voice=voice,
         topic_seed=topic_seed,
-        history=history
+        history=history,
+        candidate_name=candidate_name,
+        candidate_profile=profile_bits,
+        context_memory=profile_bits,
+        examiner_name=examiner_name,
+        opener_style=opener_style,
     )
     
     await db.speaking_sessions.insert_one(session.model_dump())
@@ -118,6 +190,10 @@ async def respond_text(req: RespondRequest, db=Depends(get_db)):
 
     # Add candidate's response to history
     session.history.append(ChatMessage(role="candidate", content=req.candidate_text))
+    memory_updates = _extract_candidate_memory(req.candidate_text)
+    if memory_updates:
+        merged = _normalize_profile_bits([*session.context_memory, *memory_updates])
+        session.context_memory = merged
 
     # Detect part transitions from examiner's previous messages
     last_examiner = ""
@@ -152,6 +228,11 @@ async def respond_text(req: RespondRequest, db=Depends(get_db)):
         part=session.part,
         topic_seed=session.topic_seed,
         history=history_dicts,
+        candidate_name=session.candidate_name,
+        candidate_profile=session.candidate_profile,
+        context_memory=session.context_memory,
+        examiner_name=session.examiner_name,
+        opener_style=session.opener_style,
     )
 
     session.history.append(ChatMessage(role="examiner", content=examiner_text))

@@ -13,18 +13,36 @@ PART1_SYSTEM = """You are an official IELTS Speaking Examiner conducting Part 1 
 
 RULES:
 - Ask ONE question at a time. Wait for the candidate's response before asking the next.
-- Start by introducing yourself briefly: "Good morning/afternoon. My name is Sarah. Can you tell me your full name, please?"
+- Your examiner name is: {examiner_name}
+- Opening style for this session: {opener_style}
+- Create a fresh, natural opening each session. Do not reuse fixed wording.
+- Introduce yourself briefly in one sentence, then ask for candidate name naturally.
 - After the name, ask about familiar topics: home, work/studies, hobbies, daily routine, hometown.
+- If candidate profile or context memory exists, use it to choose relevant follow-up questions.
 - Ask 4-5 questions total for Part 1.
 - Keep your questions natural and conversational.
 - Do NOT evaluate or give feedback during the test. Just ask questions.
 - Do NOT answer your own questions.
 - After 4-5 questions, say: "Thank you. Now let's move on to Part 2."
 - Be warm but professional. Use British English.
+
+Candidate profile for personalization:
+{candidate_profile}
+
+Context memory from earlier answers:
+{context_memory}
 """
 
 PART2_SYSTEM = """You are an official IELTS Speaking Examiner conducting Part 2 of the speaking test.
 The core theme for this specific test session is: {topic_seed}.
+Examiner name: {examiner_name}
+Opening style: {opener_style}
+
+Candidate profile for personalization:
+{candidate_profile}
+
+Context memory from earlier answers:
+{context_memory}
 
 RULES:
 - Give the candidate a cue card topic highly related to the theme: {topic_seed}.
@@ -42,6 +60,14 @@ RULES:
 
 PART3_SYSTEM = """You are an official IELTS Speaking Examiner conducting Part 3 of the speaking test.
 The core theme for this specific test session is: {topic_seed}.
+Examiner name: {examiner_name}
+Opening style: {opener_style}
+
+Candidate profile for personalization:
+{candidate_profile}
+
+Context memory from earlier answers:
+{context_memory}
 
 RULES:
 - Ask abstract, discussion-style questions related to the theme: {topic_seed}.
@@ -80,19 +106,55 @@ Be encouraging but honest. Use specific examples from the conversation.
 """
 
 
-def get_system_prompt(part: int, topic_seed: str) -> str:
+def get_system_prompt(
+    part: int,
+    topic_seed: str,
+    candidate_profile: list[str] | None,
+    context_memory: list[str] | None,
+    examiner_name: str,
+    opener_style: str,
+) -> str:
     """Returns the system prompt for the given IELTS speaking part."""
+    profile_text = "\n".join(f"- {line}" for line in (candidate_profile or [])) or "- No profile provided yet."
+    memory_text = "\n".join(f"- {line}" for line in (context_memory or [])) or "- No memory captured yet."
+
     prompts = {
-        1: PART1_SYSTEM, 
-        2: PART2_SYSTEM.replace("{topic_seed}", topic_seed), 
-        3: PART3_SYSTEM.replace("{topic_seed}", topic_seed)
+        1: PART1_SYSTEM,
+        2: PART2_SYSTEM,
+        3: PART3_SYSTEM,
     }
-    return prompts.get(part, PART1_SYSTEM)
+    base = prompts.get(part, PART1_SYSTEM)
+    return (
+        base.replace("{topic_seed}", topic_seed)
+        .replace("{candidate_profile}", profile_text)
+        .replace("{context_memory}", memory_text)
+        .replace("{examiner_name}", examiner_name)
+        .replace("{opener_style}", opener_style)
+    )
 
 
-def build_messages(part: int, topic_seed: str, history: list[dict]) -> list:
+def build_messages(
+    part: int,
+    topic_seed: str,
+    history: list[dict],
+    candidate_profile: list[str] | None,
+    context_memory: list[str] | None,
+    examiner_name: str,
+    opener_style: str,
+) -> list:
     """Builds the LangChain message list from conversation history."""
-    messages = [SystemMessage(content=get_system_prompt(part, topic_seed))]
+    messages = [
+        SystemMessage(
+            content=get_system_prompt(
+                part,
+                topic_seed,
+                candidate_profile,
+                context_memory,
+                examiner_name,
+                opener_style,
+            )
+        )
+    ]
 
     for msg in history:
         if msg["role"] == "examiner":
@@ -103,7 +165,16 @@ def build_messages(part: int, topic_seed: str, history: list[dict]) -> list:
     return messages
 
 
-async def examiner_respond(part: int, topic_seed: str, history: list[dict]) -> str:
+async def examiner_respond(
+    part: int,
+    topic_seed: str,
+    history: list[dict],
+    candidate_name: str | None = None,
+    candidate_profile: list[str] | None = None,
+    context_memory: list[str] | None = None,
+    examiner_name: str = "Sarah",
+    opener_style: str = "warm",
+) -> str:
     """
     Generates the examiner's next response based on conversation history.
 
@@ -116,7 +187,21 @@ async def examiner_respond(part: int, topic_seed: str, history: list[dict]) -> s
         The examiner's response text.
     """
     llm = get_llm()
-    messages = build_messages(part, topic_seed, history)
+    if candidate_name:
+        profile_lines = candidate_profile or []
+        if not any("Preferred name:" in line for line in profile_lines):
+            profile_lines = [f"Preferred name: {candidate_name}", *profile_lines]
+        candidate_profile = profile_lines
+
+    messages = build_messages(
+        part,
+        topic_seed,
+        history,
+        candidate_profile,
+        context_memory,
+        examiner_name,
+        opener_style,
+    )
     response = llm.invoke(messages)
     return response.content
 
