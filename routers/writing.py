@@ -3,9 +3,13 @@ Writing test API routes.
 """
 
 from fastapi import APIRouter
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import List
 from agents.writing_agent import evaluate_essay
+from agents.writing_agent import generate_unique_task1_prompts, generate_unique_task2_prompts, CHART_OUTPUT_DIR
+from fastapi import HTTPException
+import os
 
 router = APIRouter(prefix="/api/writing", tags=["writing"])
 
@@ -51,28 +55,18 @@ async def evaluate(req: EvaluateRequest):
 
 @router.get("/prompts")
 async def get_sample_prompts():
-    """Returns sample IELTS writing prompts for the frontend."""
+    """Returns unique IELTS writing prompts for the frontend."""
     return {
-        "task1": [
-            {
-                "id": "t1_1",
-                "text": "The chart below shows the number of men and women in further education in Britain in three periods and whether they were studying full-time or part-time. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
-                "image_url": "/images/task1_pie_chart.png"
-            },
-            {
-                "id": "t1_2",
-                "text": "The maps below show the centre of a small town called Islip as it is now, and plans for its development. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
-                "image_url": "/images/task1_map.png"
-            }
-        ],
-        "task2": [
-            {
-                "id": "t2_1",
-                "text": "Some people believe that unpaid community service should be a compulsory part of high school programmes. To what extent do you agree or disagree?"
-            },
-            {
-                "id": "t2_2",
-                "text": "Many manufactured food and drink products contain high levels of sugar, which causes many health problems. Sugary products should be made more expensive to encourage people to consume less sugar. Do you agree or disagree?"
-            }
-        ]
+        "task1": generate_unique_task1_prompts(count=3),
+        "task2": generate_unique_task2_prompts(count=4),
     }
+
+
+@router.get("/generated-chart/{filename}")
+async def get_generated_chart(filename: str):
+    """Serves dynamically generated writing Task 1 chart images."""
+    safe_name = os.path.basename(filename)
+    file_path = CHART_OUTPUT_DIR / safe_name
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Chart image not found")
+    return FileResponse(str(file_path), media_type="image/png")

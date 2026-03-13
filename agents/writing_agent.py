@@ -9,6 +9,10 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from utils.llm import get_llm
 import os
 from groq import AsyncGroq
+from pathlib import Path
+import random
+import uuid
+from PIL import Image, ImageDraw
 
 # ---- Structured Output Schema ----
 
@@ -36,6 +40,185 @@ Strictly output your evaluation in the required JSON format.
 Be highly accurate and strict. A perfect 9 is extremely rare.
 Provide clear, actionable feedback and rewrite a section to demonstrate a Band 8+ standard. 
 """
+
+CHART_OUTPUT_DIR = Path(__file__).resolve().parent.parent / "generated_charts"
+CHART_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _draw_axes(draw: ImageDraw.ImageDraw, width: int, height: int) -> tuple[int, int, int, int]:
+    left, top, right, bottom = 80, 60, width - 40, height - 70
+    draw.line([(left, top), (left, bottom)], fill=(70, 70, 70), width=2)
+    draw.line([(left, bottom), (right, bottom)], fill=(70, 70, 70), width=2)
+    return left, top, right, bottom
+
+
+def _build_bar_chart() -> tuple[str, str]:
+    categories = random.sample(["Australia", "Canada", "Japan", "Brazil", "Germany", "India", "Spain"], 4)
+    values = [random.randint(40, 160) for _ in categories]
+    year = random.choice([2018, 2019, 2020, 2021, 2022, 2023])
+
+    width, height = 900, 520
+    image = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(image)
+    left, top, right, bottom = _draw_axes(draw, width, height)
+
+    max_v = max(values)
+    bar_area_width = right - left
+    bar_width = int(bar_area_width / (len(categories) * 1.8))
+    gap = int((bar_area_width - bar_width * len(categories)) / (len(categories) + 1))
+
+    for idx, (cat, value) in enumerate(zip(categories, values)):
+        x1 = left + gap + idx * (bar_width + gap)
+        x2 = x1 + bar_width
+        bar_height = int((value / max_v) * (bottom - top - 20))
+        y1 = bottom - bar_height
+        draw.rectangle([(x1, y1), (x2, bottom)], fill=(67, 97, 238), outline=(38, 59, 168), width=2)
+        draw.text((x1, bottom + 10), cat, fill=(50, 50, 50))
+        draw.text((x1 + 8, y1 - 20), str(value), fill=(50, 50, 50))
+
+    title = f"Bar chart: Number of weekly public library visitors in {year}"
+    draw.text((80, 20), title, fill=(20, 20, 20))
+
+    filename = f"task1_bar_{uuid.uuid4().hex}.png"
+    image.save(CHART_OUTPUT_DIR / filename)
+
+    prompt_text = (
+        "The chart below shows the number of weekly visitors to public libraries in four countries "
+        f"in {year}. Summarise the information by selecting and reporting the main features, and make "
+        "comparisons where relevant."
+    )
+    return filename, prompt_text
+
+
+def _build_line_chart() -> tuple[str, str]:
+    years = [2019, 2020, 2021, 2022, 2023]
+    city_a = [random.randint(20, 40)]
+    city_b = [random.randint(30, 50)]
+    for _ in years[1:]:
+        city_a.append(max(10, city_a[-1] + random.randint(-5, 8)))
+        city_b.append(max(10, city_b[-1] + random.randint(-6, 7)))
+
+    width, height = 900, 520
+    image = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(image)
+    left, top, right, bottom = _draw_axes(draw, width, height)
+    max_v = max(city_a + city_b)
+    min_v = min(city_a + city_b)
+    spread = max(1, max_v - min_v)
+
+    def project(idx: int, value: int) -> tuple[int, int]:
+        x = left + int((idx / (len(years) - 1)) * (right - left))
+        y = bottom - int(((value - min_v) / spread) * (bottom - top - 20))
+        return x, y
+
+    points_a = [project(i, v) for i, v in enumerate(city_a)]
+    points_b = [project(i, v) for i, v in enumerate(city_b)]
+
+    draw.line(points_a, fill=(22, 163, 74), width=4)
+    draw.line(points_b, fill=(225, 29, 72), width=4)
+    for i, year in enumerate(years):
+        x = left + int((i / (len(years) - 1)) * (right - left))
+        draw.text((x - 10, bottom + 10), str(year), fill=(50, 50, 50))
+
+    draw.text((80, 20), "Line chart: Average daily cycling commuters (thousands)", fill=(20, 20, 20))
+    draw.text((right - 190, top + 10), "Green: City A", fill=(22, 163, 74))
+    draw.text((right - 190, top + 30), "Rose: City B", fill=(225, 29, 72))
+
+    filename = f"task1_line_{uuid.uuid4().hex}.png"
+    image.save(CHART_OUTPUT_DIR / filename)
+
+    prompt_text = (
+        "The line graph compares the average number of daily cycling commuters (in thousands) "
+        "in two cities between 2019 and 2023. Summarise the information by selecting and reporting "
+        "the main features, and make comparisons where relevant."
+    )
+    return filename, prompt_text
+
+
+def _build_pie_chart() -> tuple[str, str]:
+    labels = ["Housing", "Food", "Transport", "Leisure", "Other"]
+    values = [random.randint(10, 35) for _ in labels]
+    total = sum(values)
+    values = [max(5, int(v * 100 / total)) for v in values]
+    values[-1] = 100 - sum(values[:-1])
+
+    width, height = 900, 520
+    image = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(image)
+    center = (300, 260)
+    radius = 170
+    colors = [(59, 130, 246), (245, 158, 11), (16, 185, 129), (239, 68, 68), (124, 58, 237)]
+
+    start = 0.0
+    for i, (label, value) in enumerate(zip(labels, values)):
+        end = start + (value / 100) * 360
+        draw.pieslice(
+            [center[0] - radius, center[1] - radius, center[0] + radius, center[1] + radius],
+            start=start,
+            end=end,
+            fill=colors[i],
+            outline="white",
+            width=2,
+        )
+        draw.rectangle([(560, 120 + i * 52), (580, 140 + i * 52)], fill=colors[i])
+        draw.text((590, 120 + i * 52), f"{label}: {value}%", fill=(40, 40, 40))
+        start = end
+
+    draw.text((80, 20), "Pie chart: Average monthly household spending by category", fill=(20, 20, 20))
+    filename = f"task1_pie_{uuid.uuid4().hex}.png"
+    image.save(CHART_OUTPUT_DIR / filename)
+
+    prompt_text = (
+        "The pie chart illustrates the average monthly household expenditure by category in a medium-sized city. "
+        "Summarise the information by selecting and reporting the main features, and make comparisons where relevant."
+    )
+    return filename, prompt_text
+
+
+def generate_unique_task1_prompts(count: int = 3) -> list[dict]:
+    builders = [_build_bar_chart, _build_line_chart, _build_pie_chart]
+    random.shuffle(builders)
+    prompts: list[dict] = []
+    for i in range(min(count, len(builders))):
+        filename, prompt_text = builders[i]()
+        prompts.append(
+            {
+                "id": f"t1_dynamic_{i + 1}_{uuid.uuid4().hex[:6]}",
+                "text": prompt_text,
+                "image_url": f"http://localhost:8000/api/writing/generated-chart/{filename}",
+            }
+        )
+    return prompts
+
+
+def generate_unique_task2_prompts(count: int = 4) -> list[dict]:
+    templates = [
+        "Some people think {topic_a} should be taught as a compulsory subject in secondary schools, while others believe students should choose freely. Discuss both views and give your opinion.",
+        "In many countries, {topic_a} is becoming more common. What are the reasons for this trend, and is it a positive or negative development?",
+        "Governments should spend more money on {topic_a} than on {topic_b}. To what extent do you agree or disagree?",
+        "Some people say that advances in {topic_a} have improved our quality of life, while others think they have created new problems. Discuss both views and give your opinion.",
+        "Young people today spend too much time on {topic_a}. What problems can this cause, and what solutions can you suggest?",
+    ]
+    topics = [
+        "public transport",
+        "online education",
+        "artificial intelligence tools",
+        "social media",
+        "renewable energy",
+        "urban green spaces",
+        "remote working",
+        "tourism",
+        "sports facilities",
+        "digital payments",
+    ]
+
+    prompts: list[dict] = []
+    for i in range(count):
+        template = random.choice(templates)
+        a, b = random.sample(topics, 2)
+        text = template.format(topic_a=a, topic_b=b)
+        prompts.append({"id": f"t2_dynamic_{i + 1}_{uuid.uuid4().hex[:6]}", "text": text})
+    return prompts
 
 async def extract_text_from_image(base64_image: str) -> str:
     """Uses Groq Vision (llama-3.2-11b-vision-preview) to extract text from a base64 encoded image."""
