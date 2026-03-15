@@ -23,33 +23,20 @@ RULES:
 - Your examiner name is: {examiner_name}
 - Opening style for this session: {opener_style}
 - Create a fresh, natural opening each session. Do not reuse fixed wording.
-- Introduce yourself briefly in one sentence, then ask for candidate name naturally.
-- After the name, ask about familiar topics: home, work/studies, hobbies, daily routine, hometown.
-- If candidate profile or context memory exists, use it to choose relevant follow-up questions.
+- Introduce yourself briefly in one sentence, then begin Part 1 naturally.
+- Ask about familiar topics: home area, studies/work, hobbies, daily routine.
 - Ask 4-5 questions total for Part 1.
 - Keep your questions natural and conversational.
 - Do NOT evaluate or give feedback during the test. Just ask questions.
 - Do NOT answer your own questions.
 - After 4-5 questions, say: "Thank you. Now let's move on to Part 2."
 - Be warm but professional. Use British English.
-
-Candidate profile for personalization:
-{candidate_profile}
-
-Context memory from earlier answers:
-{context_memory}
 """
 
 PART2_SYSTEM = """You are an official IELTS Speaking Examiner conducting Part 2 of the speaking test.
 The core theme for this specific test session is: {topic_seed}.
 Examiner name: {examiner_name}
 Opening style: {opener_style}
-
-Candidate profile for personalization:
-{candidate_profile}
-
-Context memory from earlier answers:
-{context_memory}
 
 RULES:
 - Give the candidate a cue card topic highly related to the theme: {topic_seed}.
@@ -69,12 +56,6 @@ PART3_SYSTEM = """You are an official IELTS Speaking Examiner conducting Part 3 
 The core theme for this specific test session is: {topic_seed}.
 Examiner name: {examiner_name}
 Opening style: {opener_style}
-
-Candidate profile for personalization:
-{candidate_profile}
-
-Context memory from earlier answers:
-{context_memory}
 
 RULES:
 - Ask abstract, discussion-style questions related to the theme: {topic_seed}.
@@ -122,9 +103,6 @@ def get_system_prompt(
     opener_style: str,
 ) -> str:
     """Returns the system prompt for the given IELTS speaking part."""
-    profile_text = "\n".join(f"- {line}" for line in (candidate_profile or [])) or "- No profile provided yet."
-    memory_text = "\n".join(f"- {line}" for line in (context_memory or [])) or "- No memory captured yet."
-
     prompts = {
         1: PART1_SYSTEM,
         2: PART2_SYSTEM,
@@ -133,8 +111,6 @@ def get_system_prompt(
     base = prompts.get(part, PART1_SYSTEM)
     return (
         base.replace("{topic_seed}", topic_seed)
-        .replace("{candidate_profile}", profile_text)
-        .replace("{context_memory}", memory_text)
         .replace("{examiner_name}", examiner_name)
         .replace("{opener_style}", opener_style)
     )
@@ -190,11 +166,8 @@ async def _examiner_respond_legacy(
 ) -> str:
     """Legacy speaking response path retained as fallback."""
     llm = get_llm()
-    if candidate_name:
-        profile_lines = candidate_profile or []
-        if not any("Preferred name:" in line for line in profile_lines):
-            profile_lines = [f"Preferred name: {candidate_name}", *profile_lines]
-        candidate_profile = profile_lines
+    candidate_profile = None
+    context_memory = None
 
     messages = build_messages(
         part,
@@ -221,11 +194,8 @@ async def _examiner_respond_langgraph(
     session_id: str | None = None,
 ) -> str:
     """LangGraph speaking response path."""
-    if candidate_name:
-        profile_lines = candidate_profile or []
-        if not any("Preferred name:" in line for line in profile_lines):
-            profile_lines = [f"Preferred name: {candidate_name}", *profile_lines]
-        candidate_profile = profile_lines
+    candidate_profile = None
+    context_memory = None
 
     graph = _get_speaking_graph()
     thread_seed = (session_id or "").strip() or f"speaking-{uuid.uuid4().hex}"
