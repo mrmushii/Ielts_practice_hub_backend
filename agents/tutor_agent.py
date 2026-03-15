@@ -5,6 +5,7 @@ Omni-Tutor Agent equipped with Search, Grounding, and RAG tools.
 import os
 import uuid
 import json
+import re
 from datetime import datetime
 from urllib.parse import urlencode
 from urllib.request import urlopen, Request
@@ -264,3 +265,95 @@ async def chat_with_tutor(
             return await _chat_with_tutor_legacy(message, essay_context=essay_context, history=history)
 
     return await _chat_with_tutor_legacy(message, essay_context=essay_context, history=history)
+
+
+def suggest_tutor_actions(message: str) -> dict:
+    """Maps user intent to safe, allowlisted frontend actions for one-stop tutor routing."""
+    lowered = (message or "").strip().lower()
+
+    module_rules = [
+        ("speaking", ["speaking", "speak", "oral", "mock interview", "examiner"]),
+        ("listening", ["listening", "listen", "audio", "hearing"]),
+        ("reading", ["reading", "read", "passage", "comprehension"]),
+        ("writing", ["writing", "write", "essay", "task 1", "task 2"]),
+    ]
+
+    def has_phrase(phrases: list[str]) -> bool:
+        return any(phrase in lowered for phrase in phrases)
+
+    def build_nav_action(module: str) -> dict:
+        route = f"/{module}"
+        return {
+            "id": f"open-{module}",
+            "type": "navigate_module",
+            "module": module,
+            "route": route,
+            "label": f"Open {module.capitalize()} Practice",
+            "description": f"Go to the {module.capitalize()} test workspace.",
+            "requires_confirmation": True,
+        }
+
+    matched_module = None
+    for module, phrases in module_rules:
+        if has_phrase(phrases):
+            matched_module = module
+            break
+
+    control_phrases = [
+        "one stop",
+        "control",
+        "dashboard",
+        "workspace",
+        "home",
+        "navigate",
+        "redirect",
+        "take me",
+        "open",
+        "go to",
+    ]
+    wants_control = has_phrase(control_phrases)
+
+    explicit_practice = bool(re.search(r"\b(practice|start|begin|take)\b", lowered))
+
+    actions: list[dict] = []
+    intent = "chat"
+    confidence = 0.3
+    reason = "General tutoring request"
+
+    if matched_module and (explicit_practice or wants_control):
+        actions.append(build_nav_action(matched_module))
+        intent = "suggest_practice"
+        confidence = 0.95
+        reason = f"Detected practice/navigation request for {matched_module}."
+    elif matched_module:
+        actions.append(build_nav_action(matched_module))
+        intent = "suggest_practice"
+        confidence = 0.75
+        reason = f"Detected module-specific topic: {matched_module}."
+    elif "tutor" in lowered and has_phrase(["open", "workspace", "full"]):
+        actions.append(
+            {
+                "id": "open-tutor-workspace",
+                "type": "open_tutor_workspace",
+                "module": "tutor",
+                "route": "/tutor",
+                "label": "Open Tutor Workspace",
+                "description": "Use the full-screen tutor control center.",
+                "requires_confirmation": True,
+            }
+        )
+        intent = "navigate"
+        confidence = 0.85
+        reason = "Detected explicit request to open tutor workspace."
+    elif wants_control:
+        actions.extend([build_nav_action("speaking"), build_nav_action("writing"), build_nav_action("reading"), build_nav_action("listening")])
+        intent = "show_help"
+        confidence = 0.8
+        reason = "Detected dashboard/control request, suggesting all practice modules."
+
+    return {
+        "intent": intent,
+        "confidence": confidence,
+        "reason": reason,
+        "actions": actions,
+    }

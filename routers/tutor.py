@@ -4,11 +4,11 @@ Tutor Chat API routes.
 
 from fastapi import APIRouter, UploadFile, File
 from pydantic import BaseModel
-from agents.tutor_agent import chat_with_tutor
+from agents.tutor_agent import chat_with_tutor, suggest_tutor_actions
 from utils.stt import transcribe_audio
 import tempfile
 import os
-from typing import Optional
+from typing import Optional, Literal
 
 router = APIRouter(prefix="/api/tutor", tags=["tutor"])
 
@@ -19,8 +19,28 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None
     use_langgraph: Optional[bool] = True
 
+
+class TutorAction(BaseModel):
+    id: str
+    type: Literal["navigate_module", "open_tutor_workspace"]
+    module: str
+    route: str
+    label: str
+    description: str
+    requires_confirmation: bool = True
+
+
+class TutorResponseMeta(BaseModel):
+    intent: str
+    confidence: float
+    reason: str
+    session_id: Optional[str] = None
+
+
 class ChatResponse(BaseModel):
     response: str
+    actions: list[TutorAction] = []
+    meta: TutorResponseMeta
 
 @router.post("/chat", response_model=ChatResponse)
 async def ask_tutor(req: ChatRequest):
@@ -32,7 +52,17 @@ async def ask_tutor(req: ChatRequest):
         session_id=req.session_id,
         use_langgraph=req.use_langgraph,
     )
-    return ChatResponse(response=reply)
+    action_data = suggest_tutor_actions(req.message)
+    return ChatResponse(
+        response=reply,
+        actions=[TutorAction(**item) for item in action_data["actions"]],
+        meta=TutorResponseMeta(
+            intent=action_data["intent"],
+            confidence=action_data["confidence"],
+            reason=action_data["reason"],
+            session_id=req.session_id,
+        ),
+    )
 
 @router.post("/transcribe")
 async def transcribe(audio: UploadFile = File(...)):
