@@ -278,11 +278,20 @@ def suggest_tutor_actions(message: str) -> dict:
         ("writing", ["writing", "write", "essay", "task 1", "task 2"]),
     ]
 
+    slash_commands = {
+        "/speaking": "speaking",
+        "/listening": "listening",
+        "/reading": "reading",
+        "/writing": "writing",
+        "/tutor": "tutor",
+        "/home": "home",
+    }
+
     def has_phrase(phrases: list[str]) -> bool:
         return any(phrase in lowered for phrase in phrases)
 
     def build_nav_action(module: str) -> dict:
-        route = f"/{module}"
+        route = "/" if module == "home" else f"/{module}"
         return {
             "id": f"open-{module}",
             "type": "navigate_module",
@@ -291,6 +300,54 @@ def suggest_tutor_actions(message: str) -> dict:
             "label": f"Open {module.capitalize()} Practice",
             "description": f"Go to the {module.capitalize()} test workspace.",
             "requires_confirmation": True,
+        }
+
+    def build_start_action(module: str) -> dict:
+        return {
+            "id": f"start-{module}",
+            "type": "start_module_flow",
+            "module": module,
+            "route": f"/{module}?tutor_start=1",
+            "label": f"Start {module.capitalize()} Now",
+            "description": f"Open {module.capitalize()} and trigger a fresh practice flow.",
+            "start_action": "start_test",
+            "requires_confirmation": True,
+        }
+
+    slash_detected = lowered.split(" ", 1)[0] if lowered else ""
+    if slash_detected in slash_commands:
+        module = slash_commands[slash_detected]
+        if module == "tutor":
+            return {
+                "intent": "navigate",
+                "confidence": 0.98,
+                "reason": "Slash command requested tutor workspace.",
+                "actions": [
+                    {
+                        "id": "open-tutor-workspace",
+                        "type": "open_tutor_workspace",
+                        "module": "tutor",
+                        "route": "/tutor",
+                        "label": "Open Tutor Workspace",
+                        "description": "Use the full-screen tutor control center.",
+                        "requires_confirmation": True,
+                    }
+                ],
+            }
+
+        if module == "home":
+            return {
+                "intent": "navigate",
+                "confidence": 0.98,
+                "reason": "Slash command requested home route.",
+                "actions": [build_nav_action("home")],
+            }
+
+        return {
+            "intent": "suggest_practice",
+            "confidence": 0.99,
+            "reason": f"Slash command requested {module}.",
+            "actions": [build_start_action(module), build_nav_action(module)],
         }
 
     matched_module = None
@@ -321,7 +378,7 @@ def suggest_tutor_actions(message: str) -> dict:
     reason = "General tutoring request"
 
     if matched_module and (explicit_practice or wants_control):
-        actions.append(build_nav_action(matched_module))
+        actions.extend([build_start_action(matched_module), build_nav_action(matched_module)])
         intent = "suggest_practice"
         confidence = 0.95
         reason = f"Detected practice/navigation request for {matched_module}."

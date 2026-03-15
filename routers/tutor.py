@@ -22,11 +22,12 @@ class ChatRequest(BaseModel):
 
 class TutorAction(BaseModel):
     id: str
-    type: Literal["navigate_module", "open_tutor_workspace"]
+    type: Literal["navigate_module", "open_tutor_workspace", "start_module_flow"]
     module: str
     route: str
     label: str
     description: str
+    start_action: Optional[str] = None
     requires_confirmation: bool = True
 
 
