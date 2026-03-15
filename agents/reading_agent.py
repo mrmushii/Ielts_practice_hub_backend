@@ -31,8 +31,10 @@ class GeneratedPassage(BaseModel):
     text: str = Field(description="A 300-400 word dense academic passage suitable for IELTS reading practice")
     questions: List[GeneratedQuestion] = Field(description="Exactly 3 diverse reading comprehension questions based ONLY on the passage text")
 
-# Create embeddings model once to avoid reloading on every request
-embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+@lru_cache(maxsize=1)
+def get_embeddings():
+    """Lazily initialize embeddings so API startup stays fast in deployment."""
+    return HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
 # We use a synchronous pymongo client for LangChain's VectorStore compatibility
 _mongo_client = None
@@ -115,7 +117,7 @@ def _retrieve_context_node(state: ReadingEvaluationState) -> ReadingEvaluationSt
     collection = get_vector_collection()
     vectorstore = MongoDBAtlasVectorSearch(
         collection=collection,
-        embedding=embeddings,
+        embedding=get_embeddings(),
         index_name="vector_index"
     )
 
@@ -219,7 +221,7 @@ def load_passage_into_vector_manager(passage_id: str, text: str):
     # Create and cache the vector store
     MongoDBAtlasVectorSearch.from_texts(
         texts=chunks,
-        embedding=embeddings,
+        embedding=get_embeddings(),
         collection=collection,
         metadatas=metadatas,
         index_name="vector_index"
