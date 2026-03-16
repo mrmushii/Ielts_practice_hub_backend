@@ -5,7 +5,6 @@ import traceback
 from pymongo import MongoClient
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_mongodb import MongoDBAtlasVectorSearch
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
@@ -23,6 +22,17 @@ async def upload_document(file: UploadFile = File(...)):
         shutil.copyfileobj(file.file, buffer)
         
     try:
+        try:
+            from langchain_huggingface import HuggingFaceEmbeddings
+        except ImportError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Document embeddings are disabled in this deployment. "
+                    "Install optional packages: langchain-huggingface and sentence-transformers."
+                ),
+            ) from exc
+
         loader = PyPDFLoader(temp_path)
         documents = loader.load()
         

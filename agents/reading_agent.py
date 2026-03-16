@@ -4,7 +4,6 @@ Uses LangChain, HuggingFace embeddings, and MongoDB Atlas for vector context ret
 """
 
 from langchain_mongodb import MongoDBAtlasVectorSearch
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -34,6 +33,13 @@ class GeneratedPassage(BaseModel):
 @lru_cache(maxsize=1)
 def get_embeddings():
     """Lazily initialize embeddings so API startup stays fast in deployment."""
+    try:
+        from langchain_huggingface import HuggingFaceEmbeddings
+    except ImportError as exc:
+        raise RuntimeError(
+            "Reading embeddings are unavailable. Install optional packages: "
+            "langchain-huggingface and sentence-transformers."
+        ) from exc
     return HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
 # We use a synchronous pymongo client for LangChain's VectorStore compatibility

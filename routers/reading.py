@@ -2,7 +2,7 @@
 Reading test API routes and sample passages.
 """
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 from typing import List
 from agents.reading_agent import evaluate_reading_answer, generate_reading_test
@@ -89,11 +89,14 @@ async def get_passages():
 @router.post("/ask", response_model=AskResponse)
 async def ask_question(req: AskRequest):
     """Evaluates the user's answer against the passage using RAG."""
-    result = await evaluate_reading_answer(
-        passage_id=req.passage_id,
-        passage_text=req.passage_text,
-        question=req.question,
-        user_answer=req.user_answer,
-        use_langgraph=req.use_langgraph,
-    )
+    try:
+        result = await evaluate_reading_answer(
+            passage_id=req.passage_id,
+            passage_text=req.passage_text,
+            question=req.question,
+            user_answer=req.user_answer,
+            use_langgraph=req.use_langgraph,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return AskResponse(**result)

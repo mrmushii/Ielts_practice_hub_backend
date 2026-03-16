@@ -58,8 +58,13 @@ async def evaluate(req: EvaluateRequest):
 @router.get("/prompts")
 async def get_sample_prompts():
     """Returns unique IELTS writing prompts for the frontend."""
+    try:
+        task1 = generate_unique_task1_prompts(count=3)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
     return {
-        "task1": generate_unique_task1_prompts(count=3),
+        "task1": task1,
         "task2": generate_unique_task2_prompts(count=4),
     }
 

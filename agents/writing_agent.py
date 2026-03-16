@@ -13,7 +13,6 @@ from functools import lru_cache
 from groq import AsyncGroq
 from pathlib import Path
 import random
-from PIL import Image, ImageDraw
 from langgraph.graph import StateGraph, START, END
 from utils.langgraph_runtime import get_langgraph_checkpointer
 
@@ -48,7 +47,17 @@ CHART_OUTPUT_DIR = Path(__file__).resolve().parent.parent / "generated_charts"
 CHART_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def _draw_axes(draw: ImageDraw.ImageDraw, width: int, height: int) -> tuple[int, int, int, int]:
+def _require_pillow():
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError as exc:
+        raise RuntimeError(
+            "Chart generation requires optional dependency pillow."
+        ) from exc
+    return Image, ImageDraw
+
+
+def _draw_axes(draw, width: int, height: int) -> tuple[int, int, int, int]:
     left, top, right, bottom = 80, 60, width - 40, height - 70
     draw.line([(left, top), (left, bottom)], fill=(70, 70, 70), width=2)
     draw.line([(left, bottom), (right, bottom)], fill=(70, 70, 70), width=2)
@@ -56,6 +65,7 @@ def _draw_axes(draw: ImageDraw.ImageDraw, width: int, height: int) -> tuple[int,
 
 
 def _build_bar_chart() -> tuple[str, str]:
+    Image, ImageDraw = _require_pillow()
     categories = random.sample(["Australia", "Canada", "Japan", "Brazil", "Germany", "India", "Spain"], 4)
     values = [random.randint(40, 160) for _ in categories]
     year = random.choice([2018, 2019, 2020, 2021, 2022, 2023])
@@ -94,6 +104,7 @@ def _build_bar_chart() -> tuple[str, str]:
 
 
 def _build_line_chart() -> tuple[str, str]:
+    Image, ImageDraw = _require_pillow()
     years = [2019, 2020, 2021, 2022, 2023]
     city_a = [random.randint(20, 40)]
     city_b = [random.randint(30, 50)]
@@ -139,6 +150,7 @@ def _build_line_chart() -> tuple[str, str]:
 
 
 def _build_pie_chart() -> tuple[str, str]:
+    Image, ImageDraw = _require_pillow()
     labels = ["Housing", "Food", "Transport", "Leisure", "Other"]
     values = [random.randint(10, 35) for _ in labels]
     total = sum(values)

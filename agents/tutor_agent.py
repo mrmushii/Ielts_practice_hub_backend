@@ -12,7 +12,6 @@ from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
 from functools import lru_cache
 
-from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_core.tools import tool
 from langchain_classic.agents import create_tool_calling_agent, AgentExecutor
 from langchain_core.prompts import ChatPromptTemplate
@@ -23,7 +22,15 @@ from utils.llm import get_llm
 from utils.langgraph_runtime import get_langgraph_checkpointer
 
 
-_fallback_search = DuckDuckGoSearchRun()
+def _fallback_search_run(query: str) -> str:
+    try:
+        from langchain_community.tools import DuckDuckGoSearchRun
+    except ImportError:
+        return (
+            "Fallback web search is unavailable because optional dependency "
+            "duckduckgo-search is not installed."
+        )
+    return DuckDuckGoSearchRun().run(query)
 
 
 @tool
@@ -50,7 +57,7 @@ def _google_custom_search(query: str, site_restrict: str | None = None, num_resu
     if not api_key or not engine_id:
         if strict_mode:
             return "GOOGLE_SEARCH_ERROR: Missing GOOGLE_SEARCH_API_KEY or GOOGLE_SEARCH_ENGINE_ID."
-        fallback = _fallback_search.run(search_query)
+        fallback = _fallback_search_run(search_query)
         return "Google API keys are not configured. Fallback search result:\n\n" + fallback
 
     params = {
@@ -78,12 +85,12 @@ def _google_custom_search(query: str, site_restrict: str | None = None, num_resu
         if strict_mode:
             return f"GOOGLE_SEARCH_ERROR: Google API request failed ({err.code})."
 
-        fallback = _fallback_search.run(search_query)
+        fallback = _fallback_search_run(search_query)
         return f"Google Search failed ({err}). Fallback search result:\n\n{fallback}"
     except (URLError, TimeoutError) as err:
         if strict_mode:
             return f"GOOGLE_SEARCH_ERROR: Network failure ({err})."
-        fallback = _fallback_search.run(search_query)
+        fallback = _fallback_search_run(search_query)
         return f"Google Search failed ({err}). Fallback search result:\n\n{fallback}"
 
     items = data.get("items", [])
