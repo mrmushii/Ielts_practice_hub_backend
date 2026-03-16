@@ -13,7 +13,6 @@ from urllib.error import URLError, HTTPError
 from functools import lru_cache
 
 from langchain_core.tools import tool
-from langchain_classic.agents import create_tool_calling_agent, AgentExecutor
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.messages import BaseMessage
@@ -203,6 +202,18 @@ async def _chat_with_tutor_legacy(message: str, essay_context: str = None, histo
     """Legacy tutor execution path retained as fallback."""
     llm = get_llm()
     system_text = _build_system_prompt(essay_context)
+
+    try:
+        from langchain_classic.agents import create_tool_calling_agent, AgentExecutor
+    except ImportError:
+        # Last-resort fallback when langchain_classic is not installed in slim deployments.
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_text),
+            ("human", "{input}"),
+        ])
+        chain = prompt | llm
+        result = await chain.ainvoke({"input": message})
+        return getattr(result, "content", str(result))
         
     dynamic_prompt = ChatPromptTemplate.from_messages([
         ("system", system_text),

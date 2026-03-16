@@ -11,3 +11,6 @@ pillow
 
 # Tutor fallback web search (when Google CSE keys are absent and strict mode disabled)
 duckduckgo-search
+
+# Optional: legacy tutor tool-calling fallback path
+langchain-classic
