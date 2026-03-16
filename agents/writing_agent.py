@@ -191,18 +191,38 @@ def _build_pie_chart() -> tuple[str, str]:
 
 
 def generate_unique_task1_prompts(count: int = 3) -> list[dict]:
-    builders = [_build_bar_chart, _build_line_chart, _build_pie_chart]
-    random.shuffle(builders)
+    # For cloud stability, Task 1 now uses a large static prompt bank (charts/maps)
+    # and avoids runtime chart image generation.
+    prompt_bank = [
+        "The bar chart compares the percentage of households using renewable energy in five countries in 2010 and 2020. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
+        "The line graph shows changes in average monthly rainfall in three cities between January and December. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
+        "The pie charts illustrate how a university distributed its annual budget across six departments in 2005 and 2025. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
+        "The table presents the number of international students enrolled in four faculties at a college between 2018 and 2023. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
+        "The map shows changes to the layout of a town center between 2000 and the present day. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
+        "The map illustrates the redevelopment of a seaside village from 1995 to 2025. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
+        "The bar chart shows the proportion of commuters using four transport modes in a city in 2012 and 2022. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
+        "The line graph compares electricity consumption in residential, commercial, and industrial sectors over a 15-year period. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
+        "The table gives data on average daily screen time by age group in 2015, 2019, and 2023. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
+        "The pie charts show how household expenditure was divided among food, housing, transport, and leisure in 1990 and 2020. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
+        "The map depicts proposed changes to an airport terminal, including transport access and passenger facilities. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
+        "The map shows how a public park will be transformed after a redevelopment project. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
+        "The bar chart compares the number of books borrowed from public libraries in five regions in 2016 and 2024. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
+        "The line graph indicates trends in average house prices in three metropolitan areas from 2008 to 2023. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
+        "The table outlines the percentage of graduates employed within six months in five subject areas over three years. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
+        "The pie charts compare energy sources used for electricity generation in a country in 2000 and 2030. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
+        "The map illustrates changes in land use in a farming village between 1980 and 2020. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
+        "The map shows the current road network of a university campus and a proposed plan for future expansion. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
+        "The bar chart presents the percentage of employees working remotely in six industries in 2019 and 2024. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
+        "The line graph compares annual tourist arrivals in four countries from 2010 to 2025. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
+    ]
+
+    picks = random.sample(prompt_bank, k=min(count, len(prompt_bank)))
     prompts: list[dict] = []
-    for i in range(min(count, len(builders))):
-        filename, prompt_text = builders[i]()
-        prompts.append(
-            {
-                "id": f"t1_dynamic_{i + 1}_{uuid.uuid4().hex[:6]}",
-                "text": prompt_text,
-                "image_url": f"http://localhost:8000/api/writing/generated-chart/{filename}",
-            }
-        )
+    for i, text in enumerate(picks, start=1):
+        prompts.append({
+            "id": f"t1_bank_{i}_{uuid.uuid4().hex[:6]}",
+            "text": text,
+        })
     return prompts
 
 
