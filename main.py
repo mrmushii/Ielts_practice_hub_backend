@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
+import os
 from routers.core import router as core_router
 from routers.speaking import router as speaking_router
 from routers.writing import router as writing_router
@@ -28,11 +29,24 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+def _get_allowed_origins() -> list[str]:
+    defaults = [
+        "http://localhost:3000",
+        "https://ielts-practice-hub-nine.vercel.app",
+    ]
+    configured = os.getenv("CORS_ALLOWED_ORIGINS", "").strip()
+    if not configured:
+        return defaults
+
+    # Comma-separated list, each normalized without trailing slash.
+    parsed = [origin.strip().rstrip("/") for origin in configured.split(",") if origin.strip()]
+    return parsed or defaults
+
 # CORS — allow the Next.js frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000",
-                   "https://ielts-practice-hub-nine.vercel.app/"],
+    allow_origins=_get_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
