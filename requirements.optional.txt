@@ -1,0 +1,13 @@
+# Optional heavy dependencies for full feature set
+# Install with:
+#   pip install -r requirements.optional.txt
+
+# Embeddings / local transformer inference
+langchain-huggingface
+sentence-transformers
+
+# Writing Task 1 chart image generation
+pillow
+
+# Tutor fallback web search (when Google CSE keys are absent and strict mode disabled)
+duckduckgo-search
