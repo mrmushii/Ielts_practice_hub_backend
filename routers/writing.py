@@ -13,6 +13,36 @@ import os
 
 router = APIRouter(prefix="/api/writing", tags=["writing"])
 
+
+def _fallback_task1_prompts() -> list[dict]:
+    """Fallback Task 1 prompts when chart image generation dependencies are unavailable."""
+    return [
+        {
+            "id": "t1_fallback_1",
+            "text": (
+                "The table below shows the percentage of households with internet access "
+                "in five countries between 2018 and 2023. Summarise the information by "
+                "selecting and reporting the main features, and make comparisons where relevant."
+            ),
+        },
+        {
+            "id": "t1_fallback_2",
+            "text": (
+                "The chart compares average monthly spending on transport, food, and housing "
+                "in an urban area over a five-year period. Summarise the information by selecting "
+                "and reporting the main features, and make comparisons where relevant."
+            ),
+        },
+        {
+            "id": "t1_fallback_3",
+            "text": (
+                "The graph illustrates changes in the number of visitors to a museum across "
+                "different seasons. Summarise the information by selecting and reporting the "
+                "main features, and make comparisons where relevant."
+            ),
+        },
+    ]
+
 # ---- Schemas ----
 
 class EvaluateRequest(BaseModel):
@@ -60,8 +90,8 @@ async def get_sample_prompts():
     """Returns unique IELTS writing prompts for the frontend."""
     try:
         task1 = generate_unique_task1_prompts(count=3)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except RuntimeError:
+        task1 = _fallback_task1_prompts()
 
     return {
         "task1": task1,
