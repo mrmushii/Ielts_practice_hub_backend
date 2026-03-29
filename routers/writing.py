@@ -89,7 +89,7 @@ async def evaluate(req: EvaluateRequest):
 async def get_sample_prompts():
     """Returns unique IELTS writing prompts for the frontend."""
     try:
-        task1 = generate_unique_task1_prompts(count=3)
+        task1 = generate_unique_task1_prompts(count=12)
     except RuntimeError:
         task1 = _fallback_task1_prompts()
 

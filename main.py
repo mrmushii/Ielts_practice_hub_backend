@@ -41,6 +41,10 @@ def _get_allowed_origins() -> list[str]:
 
     # Comma-separated list, each normalized without trailing slash.
     parsed = [origin.strip().rstrip("/") for origin in configured.split(",") if origin.strip()]
+    
+    # Log the allowed origins for easier debugging on Render
+    print(f"INFO: CORS allowed origins: {parsed or defaults}")
+    
     return parsed or defaults
 
 # CORS — allow the Next.js frontend
